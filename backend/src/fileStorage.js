@@ -1,30 +1,42 @@
 import fs from 'fs';
-import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3';
 import path from 'path';
+import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3';
 import ffmpeg from 'fluent-ffmpeg';
 import ffmpegPath from 'ffmpeg-static';
+import ffprobe from 'ffprobe-static';
 
-// Utility function to add a prefix to the filename while retaining the directory structure
-function addTempPrefixToFilename(filePath, prefix = 'temp-') {
-  const dirPath = path.dirname(filePath);
-  const baseName = path.basename(filePath);
-  const tempFileName = `${prefix}${baseName}`;
-  return path.join(dirPath, tempFileName);
+import { getCollectionAudioPrefix, getSoundRecordingsRoot, normalizeStorageKey } from './config.js';
+
+function ensureDirectory(dirPath) {
+  if (!fs.existsSync(dirPath)) {
+    fs.mkdirSync(dirPath, { recursive: true });
+  }
+}
+
+function toPosixPath(value) {
+  return value.replace(/\\/g, '/');
+}
+
+export function buildRecordingStorageKey(sessionId, taskId) {
+  return normalizeStorageKey(sessionId, `${taskId}.wav`);
 }
 
 export class FileStorage {
   constructor(storageType) {
     this.storageType = storageType;
+    this.collectionAudioPrefix = getCollectionAudioPrefix();
+    this.recordingsRoot = getSoundRecordingsRoot();
+    this.tempRoot = path.join(this.recordingsRoot, '_tmp');
     this.s3Client = this.initializeS3Client(storageType);
     ffmpeg.setFfmpegPath(ffmpegPath);
-    const directoryPath = process.env.SOUND_RECORDINGS_PATH;
-    if (!fs.existsSync(directoryPath)) {
-      fs.mkdirSync(directoryPath, { recursive: true });
-    }
-    if (storageType === 'aws-s3'){
-      this.bucketName = process.env.AWS_BUCKET_NAME
-    } else if (storageType === 'r2'){
-      this.bucketName = process.env.CF_R2_BUCKET_NAME
+    ffmpeg.setFfprobePath(ffprobe.path);
+    ensureDirectory(this.recordingsRoot);
+    ensureDirectory(this.tempRoot);
+
+    if (storageType === 'aws-s3') {
+      this.bucketName = process.env.AWS_BUCKET_NAME;
+    } else if (storageType === 'r2') {
+      this.bucketName = process.env.CF_R2_BUCKET_NAME;
     }
   }
 
@@ -38,7 +50,9 @@ export class FileStorage {
           secretAccessKey: process.env.CF_R2_SECRET_ACCESS_KEY,
         },
       });
-    } else if (storageType === 'aws-s3') {
+    }
+
+    if (storageType === 'aws-s3') {
       return new S3Client({
         region: process.env.AWS_REGION,
         credentials: {
@@ -46,74 +60,136 @@ export class FileStorage {
           secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
         },
       });
-    } else if (storageType !== 'local') {
-      throw new Error("Specified storage type not implemented!");
     }
+
+    if (storageType !== 'local') {
+      throw new Error('Specified storage type not implemented.');
+    }
+
     return null;
   }
 
+  getObjectKey(storageKey) {
+    return normalizeStorageKey(this.collectionAudioPrefix, storageKey);
+  }
+
+  getTempFilePath(sessionId, taskId) {
+    const timestamp = Date.now();
+    return path.join(this.tempRoot, `${sessionId}-${taskId}-${timestamp}.wav`);
+  }
+
+  getFinalLocalPath(storageKey) {
+    return path.join(this.recordingsRoot, ...storageKey.split('/'));
+  }
+
   async reencodeFile(inputPath) {
-    const tempOutputPath = addTempPrefixToFilename(inputPath, 'tmp-');
+    const tempOutputPath = path.join(
+      path.dirname(inputPath),
+      `processed-${path.basename(inputPath)}`
+    );
+
     return new Promise((resolve, reject) => {
       ffmpeg(inputPath)
         .output(tempOutputPath)
         .outputOptions('-c:a pcm_s16le')
         .on('end', () => {
-          console.log('Re-encoding finished');
           fs.renameSync(tempOutputPath, inputPath);
           resolve();
         })
-        .on('error', (err) => {
-          console.error('Error during re-encoding:', err.message);
-          if (fs.existsSync(tempOutputPath)) fs.unlinkSync(tempOutputPath);
-          reject(err);
+        .on('error', (error) => {
+          if (fs.existsSync(tempOutputPath)) {
+            fs.unlinkSync(tempOutputPath);
+          }
+          reject(error);
         })
         .run();
     });
   }
 
-  async saveRecording(file, outputFilename) {
-    const tempFilePath = path.join(process.env.SOUND_RECORDINGS_PATH, outputFilename);
+  async getAudioDurationSec(inputPath) {
+    return new Promise((resolve, reject) => {
+      ffmpeg.ffprobe(inputPath, (error, metadata) => {
+        if (error) {
+          reject(error);
+          return;
+        }
+
+        resolve(metadata?.format?.duration || null);
+      });
+    });
+  }
+
+  async persistLocally(tempFilePath, storageKey) {
+    const finalPath = this.getFinalLocalPath(storageKey);
+    ensureDirectory(path.dirname(finalPath));
+
+    if (fs.existsSync(finalPath)) {
+      fs.unlinkSync(finalPath);
+    }
+
+    fs.copyFileSync(tempFilePath, finalPath);
+    return finalPath;
+  }
+
+  async uploadToS3(filePath, objectKey) {
+    const fileBuffer = fs.readFileSync(filePath);
+    const response = await this.s3Client.send(
+      new PutObjectCommand({
+        Bucket: this.bucketName,
+        Key: objectKey,
+        Body: fileBuffer,
+        ContentType: 'audio/wav',
+      })
+    );
+
+    return response;
+  }
+
+  async saveRecording(file, { sessionId, taskId }) {
+    const storageKey = buildRecordingStorageKey(sessionId, taskId);
+    const tempFilePath = this.getTempFilePath(sessionId, taskId);
 
     try {
       if (!Buffer.isBuffer(file.buffer) || file.buffer.length === 0) {
-        throw new Error('Invalid or empty buffer provided');
+        throw new Error('Invalid or empty buffer provided.');
       }
 
       fs.writeFileSync(tempFilePath, file.buffer);
-      console.log(`Temporary file written to ${tempFilePath}`);
-
       await this.reencodeFile(tempFilePath);
+      const durationSec = await this.getAudioDurationSec(tempFilePath);
+
+      if (!durationSec) {
+        throw new Error('Could not determine audio duration.');
+      }
 
       if (this.storageType === 'local') {
-        console.log(`File saved locally as ${outputFilename}`);
-      } else if (this.storageType === 'r2' || this.storageType === 'aws-s3') {
-        await this.uploadToS3(tempFilePath, outputFilename);
-      } else {
-        throw new Error('Invalid storage type specified');
+        await this.persistLocally(tempFilePath, storageKey);
+        return {
+          storageType: this.storageType,
+          storageKey: toPosixPath(storageKey),
+          objectKey: toPosixPath(storageKey),
+          durationSec,
+          bucketName: null,
+        };
       }
+
+      const objectKey = this.getObjectKey(storageKey);
+      await this.uploadToS3(tempFilePath, objectKey);
+
+      return {
+        storageType: this.storageType,
+        storageKey: toPosixPath(storageKey),
+        objectKey: toPosixPath(objectKey),
+        durationSec,
+        bucketName: this.bucketName,
+      };
     } catch (error) {
       console.error(`Error saving file: ${error.message}`);
       throw error;
     } finally {
-      if (fs.existsSync(tempFilePath)) fs.unlinkSync(tempFilePath);
-    }
-  }
-
-  async uploadToS3(filePath, outputFilename) {
-    const fileBuffer = fs.readFileSync(filePath);
-    const params = {
-      Bucket: this.bucketName,
-      Key: outputFilename,
-      Body: fileBuffer,
-      ContentType: 'audio/wav',
-    };
-    try {
-      const response = await this.s3Client.send(new PutObjectCommand(params));
-      console.log(`File uploaded successfully with ETag: ${response.ETag}`);
-    } catch (error) {
-      console.error(`Error uploading to S3: ${error.message}`);
-      throw error;
+      if (fs.existsSync(tempFilePath)) {
+        fs.unlinkSync(tempFilePath);
+      }
     }
   }
 }

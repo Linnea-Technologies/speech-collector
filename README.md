@@ -1,138 +1,322 @@
-# SpeechCollector
+# AINA Speech Collector
 
-SpeechCollector is an open-source full-stack web app for coordinated collection of paired text-speech datasets. It streamlines the process of collecting voice recordings from multiple users by automatically partitioning and allocating text samples, managing recording sessions, and organizing the resulting paired data. 
+This app collects short Finnish spoken responses for the AINA classifier project.
 
-![SpeechCollector Demo](docs/assets/demo.gif)
+It is built for anonymous volunteer sessions:
 
-SpeechCollector's tech stack and supported features are as follows:
-- **Frontend**: React (Vite)
-- **Backend**: Express.js
-- **Database**: PostgreSQL
-- **Storage Options**:
-  - Local
-  - AWS S3
-  - Cloudflare R2
-- **Authentication**: Basic user management where an admin sets plaintext passwords for new users.
+- no username/password login for volunteers
+- one prompt-set topic copy per session
+- metadata saved against the session
+- prompt-by-prompt recording flow
+- exit anytime without losing submitted prompts
+- PostgreSQL for session/task/recording state
+- AWS S3 as the production audio store
 
-## Installation & Configuration
-After cloning the repository, install all dependencies using [pnpm](https://pnpm.io/installation) package manager:
-```bash
-cd speech-collector
-pnpm i
+## Architecture
+
+```text
+volunteer browser
+  -> anonymous session token
+  -> metadata + prompt recording flow
+  -> Express backend
+  -> PostgreSQL
+  -> permanent audio storage
+     - local path in development
+     - AWS S3 in production-like mode
+  -> exportDataset.js
+  -> metadata/dataset.json + metadata/samples.jsonl
+  -> audio-classifier loader
 ```
 
-### Required: Database Setup
-SpeechCollector requires a PostgreSQL database to store application data including:
-- User accounts and credentials
-- Topics and tasks information
-- Recording metadata and relationships
-- User submission tracking
+## What Changed In This Fork
 
-> 📘 **First time PostgreSQL user?**  
-> See our [Database Setup Guide](docs/database-setup.md) for detailed installation and setup instructions.
+This fork no longer treats volunteers as normal user accounts.
 
-1. **Configure Database Credentials**  
-   Create or edit the `.env` file in your project root:
-   ```env
-   PG_HOST=localhost
-   PG_PORT=5432
-   PG_DATABASE=speechcollector
-   PG_USER=yourusername
-   PG_PASSWORD=yourpassword
-   ```
+The old account flow has been replaced with:
 
-2. **Initialize Database Tables**  
-   For testing with the [Spoken-SQuAD](https://github.com/Chia-Hsuan-Lee/Spoken-SQuAD) dataset:
-   ```bash
-   node scripts/spoken-squad/push.js scripts/spoken-squad/spoken_train-v1.1.json
-   ```
+- `POST /api/start-session`
+- `POST /api/get-task`
+- `POST /api/update-session-metadata`
+- `POST /api/upload-sound`
+- `POST /api/exit-session`
+- `POST /api/complete-session`
 
-This script will create the necessary tables and populate it with spoken-squad dataset's train partition. To use other database structures, we provide a [Task Provider class](#database-structure-and-task-management-logic) you can edit. 
+The active schema is now centered on:
 
-### Audio File Storage Options & Setup
-SpeechCollector offers 3 options for storing the sound files: Local, AWS S3 and Cloudflare R2. Edit the `.env` file based on your storage choice as follows.
+- `topics`
+- `tasks`
+- `participant_sessions`
+- `recordings`
 
-**Option 1 - Local Storage:**
-Saves collected sound files to a user defined local folder.
+`users` is no longer part of the volunteer collection path.
 
-- Set `STORAGE` environment variable to `local`
-- Set `SOUND_RECORDINGS_PATH` environment variable to the desired local path
+## Environment
 
-**Option 2 - AWS S3 Storage:**
-Saves collected sound files to an AWS S3 bucket. This option requires an AWS account, configured AWS credentials and an initialized public or private [AWS S3](https://aws.amazon.com/s3/) bucket.
+Copy the example file:
 
-- Set `STORAGE` environment variable to `aws-s3`
-- Set `AWS_ACCESS_KEY_ID`,`AWS_SECRET_ACCESS_KEY`,`AWS_REGION` and `AWS_BUCKET_NAME` environment variables.
+```bash
+cp .env.example .env
+```
 
-**Option 3 - R2 Storage:**
-Saves collected sound files to an Cloudflare R2 bucket. This option requires a Cloudflare account, configured AWS credentials and an initialized public or private [Cloudflare R2](https://developers.cloudflare.com/r2/) bucket.
+Important variables:
 
-- Set `STORAGE` environment variable to `r2`
-- Set `CF_R2_ACCESS_KEY_ID`,`CF_R2_SECRET_ACCESS_KEY`,`CF_R2_ENDPOINT`,`CF_R2_BUCKET_NAME` environment variables.
+```env
+APP_URL=http://localhost:5173
+VITE_API_URL=http://localhost:8000
+VITE_APP_TITLE=AINA Speech Collector
 
+PG_HOST=localhost
+PG_PORT=5432
+PG_DATABASE=speechcollector
+PG_USER=postgres
+PG_PASSWORD=postgres
 
-## Run SpeechCollector
-Ensure your environment variables are set and the database is populated. Run the development server with:
+STORAGE=local
+SOUND_RECORDINGS_PATH=tmp/recordings
+COLLECTION_AUDIO_PREFIX=short-finnish-responses/v1/audio
+SESSION_IDLE_TIMEOUT_HOURS=24
+
+AWS_ACCESS_KEY_ID=
+AWS_SECRET_ACCESS_KEY=
+AWS_REGION=eu-north-1
+AWS_BUCKET_NAME=
+
+AINA_TOPIC_COPIES=100
+
+DATASET_ID=short_finnish_responses
+DATASET_VERSION=v1
+DATASET_LANGUAGE=fi
+DATASET_DESCRIPTION=Short Finnish speech responses for voicemail keyword/audio classification
+DATASET_TASK=short_response_classification
+DATASET_OUTPUT_DIR=./exports/short-finnish-responses/v1
+DATASET_AUDIO_ROOT=
+DATASET_SPEAKER_HASH_SALT=change-me-before-real-export
+```
+
+Notes:
+
+- `SOUND_RECORDINGS_PATH` is the canonical local audio root in development.
+- Relative `SOUND_RECORDINGS_PATH` values are resolved from the `apps/speech-collector` root.
+- Increase `AINA_TOPIC_COPIES` and rerun `pnpm run aina:seed` whenever you need more topic copies for local testing.
+- In S3 mode it is used only as a temporary processing area.
+- `COLLECTION_AUDIO_PREFIX` defines the permanent object-key prefix in S3.
+- `DATASET_AUDIO_ROOT` is optional. If empty, export derives the correct storage root from local mode or AWS S3 settings.
+
+## Database Setup
+
+PostgreSQL is required because the app stores:
+
+- anonymous participant sessions
+- assigned prompt topics
+- metadata updates
+- per-task recordings and progress
+
+For installation help, see [docs/database-setup.md](docs/database-setup.md).
+
+## Seed AINA Prompts
+
+The AINA seed script creates prompt-set copies ahead of time so concurrent volunteers can each get their own session topic.
+
+```bash
+pnpm run aina:seed
+```
+
+The seeding step uses:
+
+- [scripts/aina/migration.sql](scripts/aina/migration.sql)
+- [scripts/aina/short_finnish_prompts.json](scripts/aina/short_finnish_prompts.json)
+
+`AINA_TOPIC_COPIES` controls how many topic copies exist. If local testing exhausts them, raise `AINA_TOPIC_COPIES` in `.env` and rerun `pnpm run aina:seed` to add more copies. Existing copies are upserted; new higher-numbered copies are created.
+
+## Run The App
+
+Install dependencies:
+
+```bash
+pnpm install
+```
+
+Start the backend and frontend:
+
 ```bash
 pnpm dev
 ```
-To build the project for production:
+
+Ports:
+
+- backend: `http://localhost:8000`
+- frontend: `http://localhost:5173`
+
+## Volunteer Flow
+
+The main collection flow is:
+
+1. Volunteer opens the app.
+2. Backend starts or resumes an anonymous session.
+3. Volunteer sees the intro and metadata form.
+4. Volunteer records one prompt at a time.
+5. Each successful upload is stored and linked to the session.
+6. Volunteer can continue, refresh, or leave.
+7. Submitted recordings stay valid even if the session ends early.
+8. Completed sessions show a thank-you screen.
+
+The browser stores the active session token locally so an active session can resume automatically in the same browser.
+
+## No Prompts Available During Testing
+
+If you see "No prompts available", that usually means all seeded topic copies have already been consumed.
+
+Root cause:
+
+- `startSession()` only selects a topic that has no `participant_sessions` row
+- `participant_sessions.topic_id` is unique, so each topic copy can only be assigned once
+- `completed` and `abandoned` sessions both continue to reserve that topic copy for data-purity reasons
+
+That single-use allocation is intentional for production data collection.
+
+For local/dev testing, use one of these reset paths:
+
+1. Reuse the same seeded topics:
+
+```sql
+DELETE FROM recordings;
+DELETE FROM participant_sessions;
+```
+
+The same SQL is also available in [docs/dev-reset-session-data.sql](docs/dev-reset-session-data.sql).
+
+2. Add more topic copies without deleting topics/tasks:
+
+```bash
+pnpm run aina:seed
+```
+
+Before rerunning the seed command, increase `AINA_TOPIC_COPIES` in `.env` so the seeder creates additional topic copies.
+
+## Local Development Mode
+
+Use local storage when you want the easiest end-to-end dev loop:
+
+```env
+STORAGE=local
+SOUND_RECORDINGS_PATH=tmp/recordings
+DATASET_AUDIO_ROOT=
+```
+
+In local mode:
+
+- uploads are re-encoded and persisted under `SOUND_RECORDINGS_PATH/{session_id}/{task_id}.wav`
+- relative local paths are anchored to `apps/speech-collector`, not the backend package directory
+- exporter writes manifests that reference the same local audio root directly
+- audio is not copied into the export folder as the source of truth
+
+## Production-Like S3 Mode
+
+For a production-like test:
+
+```env
+STORAGE=aws-s3
+AWS_REGION=eu-north-1
+AWS_BUCKET_NAME=<bucket>
+AWS_ACCESS_KEY_ID=<access-key>
+AWS_SECRET_ACCESS_KEY=<secret>
+COLLECTION_AUDIO_PREFIX=short-finnish-responses/v1/audio
+```
+
+In S3 mode:
+
+- uploads are re-encoded locally first
+- final object key is `{COLLECTION_AUDIO_PREFIX}/{session_id}/{task_id}.wav`
+- PostgreSQL stores `storage_key` as `{session_id}/{task_id}.wav`
+- exporter writes `audio_root=s3://<bucket>/<COLLECTION_AUDIO_PREFIX>/`
+- manifest `audio_path` values stay relative to that root
+
+## Mixed Storage Backends In One Database
+
+The exporter writes one dataset manifest with one dataset-wide `audio_root`, so it cannot safely mix local and S3 recordings in the same export.
+
+Current behavior:
+
+- `pnpm run aina:export` only exports recordings whose `recordings.storage_type` matches the active `STORAGE` value in `.env`
+- rows from other storage backends are skipped
+- the exporter logs a summary of skipped rows by `storage_type`
+
+Examples:
+
+- with `STORAGE=local`, only `recordings.storage_type='local'` rows are exported
+- with `STORAGE=aws-s3`, only `recordings.storage_type='aws-s3'` rows are exported
+
+This keeps `dataset.json.audio_root` and every sample `audio_path` loader-compatible even if the same PostgreSQL database contains historical rows from both local and S3 collection runs.
+
+## Export Dataset
+
+After recordings exist, export manifests with:
+
+```bash
+pnpm run aina:export
+```
+
+The exporter writes:
+
+```text
+exports/short-finnish-responses/v1/
+  metadata/
+    dataset.json
+    samples.jsonl
+```
+
+Export behavior:
+
+- includes `completed` sessions
+- includes `abandoned` sessions
+- excludes still-`active` sessions
+- filters rows to the active `STORAGE` backend before building the manifest
+- hashes `session_id` into `speaker_id`
+- references permanent storage directly
+
+## Validate Against audio-classifier
+
+```bash
+cd D:\ass_vscode\AIN\packages\audio-classifier
+python - <<'PY'
+from audio_classifier.data import load_dataset
+
+dataset = load_dataset(r"D:\ass_vscode\AIN\apps\speech-collector\exports\short-finnish-responses\v1")
+print(f"loaded {len(dataset)} samples")
+print(dataset[0] if dataset else "no samples")
+PY
+```
+
+## Testing Commands
+
+Frontend build:
+
 ```bash
 pnpm build
 ```
-To run the build:
+
+Backend contract tests:
+
 ```bash
-pnpm serve
-```
-Both `pnpm dev` and `pnpm serve` will instantiate the backend at port `8000` and run the frontend at port `5173`. You can access the app through `http://localhost:5173`.
-
-## User Management & Onboarding Flow
-
-### 1. Adding New Users
-Before users can access the system, an admin must first create their account using one of these methods:
-
-**Option A - Using PostgreSQL (Before Starting the App):**
-```sql
-INSERT INTO users (username, password) 
-VALUES ('newuser', 'userpassword');
+pnpm run test:backend
 ```
 
-**Option B - Using API Endpoint (Once App is Running):**
-```bash
-curl -X POST http://localhost:8000/api/add-user \
--H "Content-Type: application/json" \
--d '{
-  "username": "newuser",
-  "password": "userpassword"
-}'
-```
+## Reset-Friendly Development
 
-### 2. User First Login & Metadata Collection
-When a user first logs in with their assigned username and password, they will be presented with a metadata collection form requesting:
-- Name
-- Last name
-- Email
-- Gender
-- Birth date
-- Other configurable fields
+This refactor assumes local/dev database resets are acceptable while the anonymous-session model is being stabilized.
 
-The metadata form fields can be customized through the `infoFormConfig.json` file with required and optional fields.
+If you want a completely fresh local run, recreate the database or drop the session/recording/topic/task tables before seeding again.
 
-### 3. Regular Usage
-After completing the metadata form, users can:
-- Access their assigned tasks
-- Record audio for their tasks
-- Submit recordings
-- Continue until they reach their topic limit (if `MAX_TOPICS_PER_USER` is set) or until no tasks remain
+If you only need more test sessions and want to keep the existing prompt copies, clear just `recordings` and `participant_sessions` with [docs/dev-reset-session-data.sql](docs/dev-reset-session-data.sql).
 
-## Database Structure and Task Management Logic
-SpeechCollector uses a PostgreSQL database with tables for Users, Topics, and Tasks. The app includes a TaskProvider system that can be customized for different dataset structures.
+## Related Docs
 
-> 📘 **Want to customize the database structure?**  
-> See our [Database Structure Guide](docs/database-structure.md) for detailed information about the schema and how to adapt it for your needs.
+- [docs/aina-refactor-plan.md](docs/aina-refactor-plan.md)
+- [docs/aina-s3-integration.md](docs/aina-s3-integration.md)
+- [docs/database-structure.md](docs/database-structure.md)
+- [docs/database-setup.md](docs/database-setup.md)
+- [docs/dev-reset-session-data.sql](docs/dev-reset-session-data.sql)
 
 ## License
+
 This project is licensed under the [MIT license](https://github.com/neuralwork/speech-collector/blob/main/LICENSE).
-
-
-From [neuralwork](https://neuralwork.ai/) with :heart:

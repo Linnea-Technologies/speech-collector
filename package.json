@@ -4,11 +4,14 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "dev:backend": "dotenv -e ./.env -- pnpm --filter sound-collector-backend start",
-    "dev:frontend": "dotenv -e ./.env -- pnpm --filter sound-collector-frontend dev",
+    "dev:backend": "pnpm exec dotenv -e ./.env -- pnpm --filter sound-collector-backend start",
+    "dev:frontend": "pnpm exec dotenv -e ./.env -- pnpm --filter sound-collector-frontend dev",
     "dev": "concurrently \"pnpm run dev:backend\" \"pnpm run dev:frontend\"",
-    "build": "dotenv -e ./.env -- pnpm --filter sound-collector-frontend build",
-    "serve": "concurrently \"pnpm run dev:backend\" \"pnpm --filter sound-collector-frontend serve\""
+    "build": "pnpm exec dotenv -e ./.env -- pnpm --filter sound-collector-frontend build",
+    "test:backend": "pnpm exec dotenv -e ./.env -- node --test backend/src/taskProvider.test.js backend/src/fileStorage.test.js scripts/aina/exportDataset.test.js",
+    "serve": "concurrently \"pnpm run dev:backend\" \"pnpm --filter sound-collector-frontend serve\"",
+    "aina:seed": "pnpm exec dotenv -e ./.env -- node scripts/aina/pushPrompts.js scripts/aina/short_finnish_prompts.json",
+    "aina:export": "pnpm exec dotenv -e ./.env -- node scripts/aina/exportDataset.js"
   },
   "devDependencies": {
     "concurrently": "^9.0.1",

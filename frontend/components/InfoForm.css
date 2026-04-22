@@ -1,10 +1,130 @@
-body {
-    /* fallback for old browsers */
-    background: #6a11cb;
-  
-    /* Chrome 10-25, Safari 5.1-6 */
-    background: -webkit-linear-gradient(to right, rgba(106, 17, 203, 1), rgba(37, 117, 252, 1));
-  
-    /* W3C, IE 10+/ Edge, Firefox 16+, Chrome 26+, Opera 12+, Safari 7+ */
-    background: linear-gradient(to right, rgba(106, 17, 203, 1), rgba(37, 117, 252, 1))
+.info-form {
+  margin-top: 24px;
+}
+
+.info-form__grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.info-form__field {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  color: #12324a;
+}
+
+.info-form__fieldset {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  border: 1px solid #d8e5ec;
+  border-radius: 16px;
+  padding: 18px;
+  background: #f8fbfd;
+  color: #12324a;
+}
+
+.info-form__legend {
+  float: none;
+  width: auto;
+  margin: 0;
+  padding: 0 4px;
+  font-weight: 600;
+  color: #0b4f6c;
+}
+
+.info-form__markdown-box {
+  border-radius: 12px;
+  padding: 16px;
+  background: #ffffff;
+  border: 1px solid #d8e5ec;
+}
+
+.info-form__markdown-box p,
+.info-form__markdown-box ul {
+  margin: 0 0 12px;
+}
+
+.info-form__markdown-box p:last-child,
+.info-form__markdown-box ul:last-child {
+  margin-bottom: 0;
+}
+
+.info-form__markdown-box h1,
+.info-form__markdown-box h2,
+.info-form__markdown-box h3,
+.info-form__markdown-box h4 {
+  margin: 0 0 10px;
+  font-size: 18px;
+  color: #0b4f6c;
+}
+
+.info-form__radio-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.info-form__radio-option {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 220px;
+  border: 1px solid #c6d4de;
+  border-radius: 12px;
+  padding: 12px 14px;
+  background: #ffffff;
+  cursor: pointer;
+}
+
+.info-form__radio-input {
+  margin: 0;
+}
+
+.info-form__hint {
+  margin: 0;
+  color: #0b4f6c;
+  font-size: 14px;
+}
+
+.info-form__input {
+  border: 1px solid #c6d4de;
+  border-radius: 8px;
+  padding: 10px 12px;
+  background: #ffffff;
+  color: #12324a;
+}
+
+.info-form__input--error {
+  border-color: #a61b29;
+}
+
+.info-form__error {
+  color: #a61b29;
+  font-size: 14px;
+}
+
+.info-form__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 12px;
+  margin-top: 24px;
+  flex-wrap: wrap;
+}
+
+@media (max-width: 720px) {
+  .info-form__grid {
+    grid-template-columns: 1fr;
   }
+
+  .info-form__actions {
+    justify-content: stretch;
+  }
+
+  .info-form__actions > button {
+    width: 100%;
+  }
+}

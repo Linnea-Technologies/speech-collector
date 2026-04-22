@@ -1,0 +1,29 @@
+{
+  "dataset_id": "short_finnish_responses",
+  "version": "v1",
+  "language": "fi",
+  "prompts": [
+    { "id": "kylla", "label": "kylla", "text": "Kyllä", "category": "affirmative" },
+    { "id": "joo", "label": "joo", "text": "Joo", "category": "affirmative" },
+    { "id": "niin", "label": "niin", "text": "Niin", "category": "affirmative" },
+    { "id": "on", "label": "on", "text": "On", "category": "affirmative" },
+    { "id": "okei", "label": "okei", "text": "Okei", "category": "affirmative" },
+    { "id": "ei", "label": "ei", "text": "Ei", "category": "negative" },
+    { "id": "en", "label": "en", "text": "En", "category": "negative" },
+    { "id": "eipa", "label": "eipa", "text": "Eipä", "category": "negative" },
+    { "id": "1", "label": "1", "text": "1", "category": "number" },
+    { "id": "2", "label": "2", "text": "2", "category": "number" },
+    { "id": "3", "label": "3", "text": "3", "category": "number" },
+    { "id": "4", "label": "4", "text": "4", "category": "number" },
+    { "id": "5", "label": "5", "text": "5", "category": "number" },
+    { "id": "6", "label": "6", "text": "6", "category": "number" },
+    { "id": "7", "label": "7", "text": "7", "category": "number" },
+    { "id": "8", "label": "8", "text": "8", "category": "number" },
+    { "id": "9", "label": "9", "text": "9", "category": "number" },
+    { "id": "10", "label": "10", "text": "10", "category": "number" },
+    { "id": "kiitos", "label": "kiitos", "text": "Kiitos", "category": "common" },
+    { "id": "anteeksi", "label": "anteeksi", "text": "Anteeksi", "category": "common" },
+    { "id": "hei", "label": "hei", "text": "Hei", "category": "common" }
+  ],
+  "control_labels": ["unknown", "silence", "noise"]
+}

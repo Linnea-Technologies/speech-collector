@@ -1,28 +1,47 @@
 [
   {
-    "label": "Name",
+    "label": "Age group",
     "type": "text",
-    "id": "name",
+    "id": "age_group",
     "required": true
   },
   {
-    "label": "Email",
-    "type": "email",
-    "id": "email"
+    "label": "Primary language",
+    "type": "text",
+    "id": "primary_language",
+    "required": true
   },
   {
-    "label": "Age",
-    "type": "integer",
-    "id": "age"
+    "label": "Dialect region",
+    "type": "text",
+    "id": "dialect_region"
   },
   {
-    "label": "Height",
-    "type": "float",
-    "id": "height"
+    "label": "Device type",
+    "type": "text",
+    "id": "device_type"
   },
   {
-    "label": "Birthdate",
-    "type": "date",
-    "id": "birthdate"
+    "label": "Recording environment",
+    "type": "text",
+    "id": "recording_environment"
+  },
+  {
+    "label": "Consent",
+    "type": "consent_markdown_yes_no",
+    "id": "consent_response",
+    "required": true,
+    "markdown": "### Consent to participate\nBy choosing **Yes**, you confirm that:\n\n- you understand these recordings are collected for the AINA speech-classifier project\n- your voice recordings and session metadata may be stored, reviewed, and exported for research and model development\n- you are participating voluntarily and may stop before submitting more prompts",
+    "options": [
+      {
+        "value": "yes",
+        "label": "Yes, I consent"
+      },
+      {
+        "value": "no",
+        "label": "No, I do not consent"
+      }
+    ],
+    "declineMessage": "Thank you for your response. This session has been closed and no prompts were shown."
   }
 ]

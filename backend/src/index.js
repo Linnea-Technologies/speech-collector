@@ -1,142 +1,191 @@
 import express from 'express';
 import cors from 'cors';
 import multer from 'multer';
-import pkg from 'pg';
 
 import { TaskProvider } from './taskProvider.js';
 import { FileStorage } from './fileStorage.js';
+import { getDbConnectionString, getSessionIdleTimeoutHours } from './config.js';
 
-const { Client } = pkg;
-const password = encodeURIComponent(process.env.PG_PASSWORD);
-const connString = `postgresql://${process.env.PG_USER}:${password}@${process.env.PG_HOST}:${process.env.PG_PORT}/${process.env.PG_DATABASE}`;
-console.log(connString)
-const provider = new TaskProvider(connString, process.env.MAX_TOPICS_PER_USER);
-const fileStorage = new FileStorage(process.env.STORAGE);
+const connString = getDbConnectionString();
+const provider = new TaskProvider(connString, {
+  sessionIdleTimeoutHours: getSessionIdleTimeoutHours(),
+});
+const fileStorage = new FileStorage(process.env.STORAGE || 'local');
 
-// Express app setup
 const app = express();
+const upload = multer();
+
 app.use(cors({ origin: process.env.APP_URL }));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
-const upload = multer();
 
+function normalizeSessionToken(value) {
+  return typeof value === 'string' && value.trim() ? value.trim() : null;
+}
 
-// Routes
-app.post('/api/login', async (req, res) => {
-  const { username, password } = req.body;
-  let client;
+function isPlainObject(value) {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+
+app.post('/api/start-session', async (req, res) => {
   try {
-    client = new Client({ connectionString: connString });
-    await client.connect();
-    const loginQuery = await client.query(`
-      SELECT *
-      FROM users
-      WHERE username='${username}' AND password='${password}'
-      LIMIT 1
-    `);
-    if (loginQuery.rowCount > 0) {
-      res.json({ result: 'success', metadata: loginQuery.rows[0].metadata });
-    } else {
-      res.json({ result: 'incorrect credentials' });
-    }
+    const sessionToken = normalizeSessionToken(req.body?.sessionToken);
+    const result = await provider.startSession(sessionToken);
+    res.status(200).json(result);
   } catch (error) {
-    console.log(error)
-    res.json({ result: 'error', error: error instanceof Error ? error.message : String(error) });
-  } finally {
-    await client.end();
+    console.error('Error in /api/start-session:', error);
+    res.status(500).json({
+      success: false,
+      message: 'An internal server error occurred.',
+    });
   }
 });
 
 app.post('/api/get-task', async (req, res) => {
-  const { username } = req.body;
+  const sessionToken = normalizeSessionToken(req.body?.sessionToken);
+  if (!sessionToken) {
+    return res.status(400).json({
+      success: false,
+      code: 'missing_session_token',
+      message: 'sessionToken is required.',
+    });
+  }
+
   try {
-    const result = await provider.getTask(username);
-    // If not successful, send the failure message and a relevant status code
-    res.status(200).json(result);
+    const result = await provider.getTask(sessionToken);
+    res.status(result.success ? 200 : 400).json(result);
   } catch (error) {
-    console.error("Error in /get-task endpoint:", error);
-    res.status(500).json({ success: false, message: 'An internal server error occurred' });
+    console.error('Error in /api/get-task:', error);
+    res.status(500).json({
+      success: false,
+      message: 'An internal server error occurred.',
+    });
+  }
+});
+
+app.post('/api/update-session-metadata', async (req, res) => {
+  const sessionToken = normalizeSessionToken(req.body?.sessionToken);
+  if (!sessionToken) {
+    return res.status(400).json({
+      success: false,
+      code: 'missing_session_token',
+      message: 'sessionToken is required.',
+    });
+  }
+
+  const metadata = req.body?.metadata;
+  if (!isPlainObject(metadata)) {
+    return res.status(400).json({
+      success: false,
+      code: 'invalid_metadata',
+      message: 'metadata must be an object.',
+    });
+  }
+
+  try {
+    const result = await provider.updateSessionMetadata(sessionToken, metadata);
+    res.status(result.success ? 200 : 400).json(result);
+  } catch (error) {
+    console.error('Error in /api/update-session-metadata:', error);
+    res.status(500).json({
+      success: false,
+      message: 'An internal server error occurred.',
+    });
   }
 });
 
 app.post('/api/upload-sound', upload.single('file'), async (req, res) => {
-  const { username, taskId } = req.body;
+  const sessionToken = normalizeSessionToken(req.body?.sessionToken);
+  const taskId = typeof req.body?.taskId === 'string' && req.body.taskId.trim()
+    ? req.body.taskId.trim()
+    : null;
   const file = req.file;
-  try {
-    await fileStorage.saveRecording(file, taskId + '.wav');
-    const { success } = await provider.submitTask(taskId);
-    res.json({
-      success: success
-    });
-  } catch (error) {
-    console.log(error.message)
-    res.json({
+
+  if (!sessionToken || !taskId || !file) {
+    return res.status(400).json({
       success: false,
-      error: "Internal server error."
+      code: 'invalid_upload_request',
+      message: 'sessionToken, taskId, and file are required.',
+    });
+  }
+
+  try {
+    const uploadTarget = await provider.getUploadTarget(sessionToken, taskId);
+    if (!uploadTarget.success) {
+      return res.status(400).json(uploadTarget);
+    }
+
+    const recording = await fileStorage.saveRecording(file, {
+      sessionId: uploadTarget.sessionId,
+      taskId,
+    });
+
+    const result = await provider.submitRecording(sessionToken, taskId, {
+      storageType: recording.storageType,
+      storageKey: recording.storageKey,
+      durationSec: recording.durationSec,
+      submittedAt: new Date().toISOString(),
+      metadata: {
+        object_key: recording.objectKey,
+        bucket_name: recording.bucketName,
+      },
+    });
+
+    res.status(result.success ? 200 : 400).json(result);
+  } catch (error) {
+    console.error('Error in /api/upload-sound:', error);
+    res.status(500).json({
+      success: false,
+      message: 'An internal server error occurred.',
     });
   }
 });
 
-app.post('/api/add-user', async (req, res) => {
-  const { Client } = pkg;
-  const client = new Client({
-    connectionString: connString,
-  });
+app.post('/api/exit-session', async (req, res) => {
+  const sessionToken = normalizeSessionToken(req.body?.sessionToken);
+  if (!sessionToken) {
+    return res.status(400).json({
+      success: false,
+      code: 'missing_session_token',
+      message: 'sessionToken is required.',
+    });
+  }
 
   try {
-    await client.connect();
-
-    // Extract user data from the request body
-    const { username, password } = req.body;
-
-    // Basic validation (add more as needed)
-    if (!username) {
-      return res.status(400).json({ error: 'Missing required fields' });
-    }
-
-    // Insert user into the database
-    await client.query(`
-      INSERT INTO users (username, password)
-      VALUES ($1, $2)
-    `, [username, password]);
-
-    res.status(201).json({ message: 'User added successfully' });
+    const result = await provider.exitSession(sessionToken);
+    res.status(result.success ? 200 : 400).json(result);
   } catch (error) {
-    console.error('Error adding user:', error);
-    res.status(500).json({ error: 'An error occurred while adding the user' });
-  } finally {
-    await client.end();
+    console.error('Error in /api/exit-session:', error);
+    res.status(500).json({
+      success: false,
+      message: 'An internal server error occurred.',
+    });
   }
 });
 
-app.post('/api/update-user-metadata', async (req, res) => {
-  const { Client } = pkg;
-  const client = new Client({
-    connectionString: connString,
-  });
-  const { username, metadata } = req.body;
-  try {
-    await client.connect();
-    if (!username) {
-      return res.status(400).json({ error: 'Missing required fields' });
-    }
-    await client.query(`
-      UPDATE users
-      SET metadata=$1
-      WHERE username=$2
-    `, [metadata, username]);
+app.post('/api/complete-session', async (req, res) => {
+  const sessionToken = normalizeSessionToken(req.body?.sessionToken);
+  if (!sessionToken) {
+    return res.status(400).json({
+      success: false,
+      code: 'missing_session_token',
+      message: 'sessionToken is required.',
+    });
+  }
 
-    res.status(201).json({ message: 'User metadata updated successfully' });
+  try {
+    const result = await provider.completeSession(sessionToken);
+    res.status(result.success ? 200 : 400).json(result);
   } catch (error) {
-    const errMessage = `Error updating user ${username}` + error;
-    console.log(errMessage);
-    res.status(500).json({ error: errMessage });
-  } finally {
-    await client.end();
+    console.error('Error in /api/complete-session:', error);
+    res.status(500).json({
+      success: false,
+      message: 'An internal server error occurred.',
+    });
   }
 });
 
-app.get('/ping', (req, res) => {
+app.get('/ping', (_req, res) => {
   res.json({ ready: true });
 });
 
