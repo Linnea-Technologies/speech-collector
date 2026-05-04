@@ -6,6 +6,7 @@ import SessionIntro from "../components/SessionIntro";
 import SessionEndScreen from "../components/SessionEndScreen";
 import SoundRecorder from "../components/SoundRecorder";
 import TextContainer from "../components/TextContainer";
+import TurnstileGate from "../components/TurnstileGate";
 import {
   getConsentDeclineMessage,
   hasDeclinedConsent,
@@ -18,6 +19,7 @@ import "./App.css";
 
 type Phase =
   | "bootstrapping"
+  | "verification"
   | "intro"
   | "metadata"
   | "task"
@@ -28,6 +30,11 @@ type Phase =
   | "error";
 
 type MetadataMode = "required" | "edit";
+
+function getVolunteerAppTitle(value: unknown) {
+  const title = typeof value === "string" ? value.replace(/\bAINA\s*/gi, "").trim() : "";
+  return title || "Speech Collector";
+}
 
 function App() {
   const {
@@ -45,10 +52,12 @@ function App() {
   const [metadataMode, setMetadataMode] = useState<MetadataMode>("required");
   const [message, setMessage] = useState<string>("");
   const [taskLoading, setTaskLoading] = useState<boolean>(false);
+  const [turnstileToken, setTurnstileToken] = useState<string | null>(null);
   const hasBootstrapped = useRef(false);
 
   const apiUrl = import.meta.env.VITE_API_URL;
-  const appName = import.meta.env.VITE_APP_TITLE || "AINA Speech Collector";
+  const appName = getVolunteerAppTitle(import.meta.env.VITE_APP_TITLE);
+  const turnstileSiteKey = import.meta.env.VITE_TURNSTILE_SITE_KEY || "";
 
   const metadataComplete = useMemo(
     () => isMetadataComplete(participantMetadata),
@@ -172,12 +181,13 @@ function App() {
   );
 
   const startOrResumeSession = useCallback(
-    async (tokenOverride?: string | null) => {
+    async (tokenOverride?: string | null, turnstileTokenOverride?: string | null) => {
       setPhase("bootstrapping");
       setMessage("");
       setCurrentTask(null);
 
       try {
+        const activeTurnstileToken = turnstileTokenOverride ?? turnstileToken;
         const response = await fetch(`${apiUrl}/api/start-session`, {
           method: "POST",
           headers: {
@@ -185,11 +195,19 @@ function App() {
           },
           body: JSON.stringify({
             sessionToken: tokenOverride === undefined ? sessionToken : tokenOverride,
+            turnstileToken: activeTurnstileToken || undefined,
           }),
         });
 
         const data = await response.json();
         if (!data.success) {
+          if (data.code === "turnstile_failed" || data.code === "missing_turnstile_token") {
+            setTurnstileToken(null);
+            setPhase("verification");
+            setMessage(data.message || "Human verification failed. Please try again.");
+            return;
+          }
+
           if (data.sessionStatus === "unavailable" || data.code === "no_topics") {
             moveToTerminalPhase("unavailable", data.message || "No prompt sets are available right now.");
             return;
@@ -222,7 +240,16 @@ function App() {
         );
       }
     },
-    [apiUrl, closeSession, loadTask, moveToTerminalPhase, sessionToken, setCurrentTask, syncSession]
+    [
+      apiUrl,
+      closeSession,
+      loadTask,
+      moveToTerminalPhase,
+      sessionToken,
+      setCurrentTask,
+      syncSession,
+      turnstileToken,
+    ]
   );
 
   useEffect(() => {
@@ -231,8 +258,21 @@ function App() {
     }
 
     hasBootstrapped.current = true;
-    void startOrResumeSession(sessionToken);
-  }, [sessionToken, startOrResumeSession]);
+    if (turnstileSiteKey && !turnstileToken) {
+      setPhase("verification");
+      return;
+    }
+
+    void startOrResumeSession(sessionToken, turnstileToken);
+  }, [sessionToken, startOrResumeSession, turnstileSiteKey, turnstileToken]);
+
+  const handleTurnstileVerified = useCallback(
+    async (token: string) => {
+      setTurnstileToken(token);
+      await startOrResumeSession(sessionToken, token);
+    },
+    [sessionToken, startOrResumeSession]
+  );
 
   const handleMetadataSaved = useCallback(
     async (session: SessionState) => {
@@ -264,17 +304,50 @@ function App() {
   const handleRestart = useCallback(async () => {
     clearSession();
     setMetadataMode("required");
+    setMessage("");
+    if (turnstileSiteKey) {
+      setTurnstileToken(null);
+      setPhase("verification");
+      return;
+    }
+
     await startOrResumeSession(null);
-  }, [clearSession, startOrResumeSession]);
+  }, [clearSession, startOrResumeSession, turnstileSiteKey]);
 
   if (phase === "bootstrapping") {
     return (
       <main className="app-shell">
         <section className="app-panel app-panel--narrow">
-          <span className="app-eyebrow">AINA Session</span>
+          <span className="app-eyebrow">Speech Collector</span>
           <h1 className="app-title">Preparing your session</h1>
           <p className="app-copy">Connecting to the next available prompt set.</p>
         </section>
+      </main>
+    );
+  }
+
+  if (phase === "verification") {
+    if (!turnstileSiteKey) {
+      return (
+        <main className="app-shell">
+          <section className="app-panel app-panel--narrow">
+            <span className="app-eyebrow">Speech Collector</span>
+            <h1 className="app-title">Verification unavailable</h1>
+            <p className="app-copy">
+              Human verification is required, but the Turnstile site key is not configured.
+            </p>
+          </section>
+        </main>
+      );
+    }
+
+    return (
+      <main className="app-shell">
+        <TurnstileGate
+          siteKey={turnstileSiteKey}
+          message={message}
+          onVerified={handleTurnstileVerified}
+        />
       </main>
     );
   }
@@ -383,7 +456,7 @@ function App() {
     <main className="app-shell">
       <section className="app-panel app-panel--wide">
         <header className="app-header">
-          <div>
+          <div className="app-header__content">
             <span className="app-eyebrow">{appName}</span>
             <h1 className="app-session-title">Current session</h1>
             <p className="app-copy">
@@ -428,6 +501,7 @@ function App() {
           <SoundRecorder
             sessionToken={sessionToken}
             taskId={currentTask.id}
+            promptedWord={currentTask.text}
             onUploadComplete={(result) => {
               if (result.session) {
                 syncSession(result.session as SessionState);

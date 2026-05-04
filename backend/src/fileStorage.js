@@ -5,7 +5,12 @@ import ffmpeg from 'fluent-ffmpeg';
 import ffmpegPath from 'ffmpeg-static';
 import ffprobe from 'ffprobe-static';
 
-import { getCollectionAudioPrefix, getSoundRecordingsRoot, normalizeStorageKey } from './config.js';
+import {
+  getCollectionAudioPrefix,
+  getMaxAllowedRecordingDurationSeconds,
+  getSoundRecordingsRoot,
+  normalizeStorageKey,
+} from './config.js';
 
 function ensureDirectory(dirPath) {
   if (!fs.existsSync(dirPath)) {
@@ -17,16 +22,41 @@ function toPosixPath(value) {
   return value.replace(/\\/g, '/');
 }
 
+export const PROCESSED_AUDIO_FFMPEG_OPTIONS = [
+  '-c:a pcm_s16le',
+  '-ar 16000',
+  '-ac 1',
+];
+
+export function getProcessedAudioMetadata() {
+  return {
+    sample_rate_hz: 16000,
+    channel_count: 1,
+    encoding: 'pcm_s16le',
+  };
+}
+
 export function buildRecordingStorageKey(sessionId, taskId) {
   return normalizeStorageKey(sessionId, `${taskId}.wav`);
 }
 
+export class RecordingTooLongError extends Error {
+  constructor(durationSec, maxDurationSec) {
+    super('Recording is longer than the allowed maximum.');
+    this.name = 'RecordingTooLongError';
+    this.code = 'recording_too_long';
+    this.durationSec = durationSec;
+    this.maxDurationSec = maxDurationSec;
+  }
+}
+
 export class FileStorage {
-  constructor(storageType) {
+  constructor(storageType, options = {}) {
     this.storageType = storageType;
     this.collectionAudioPrefix = getCollectionAudioPrefix();
     this.recordingsRoot = getSoundRecordingsRoot();
     this.tempRoot = path.join(this.recordingsRoot, '_tmp');
+    this.maxDurationSec = options.maxDurationSec ?? getMaxAllowedRecordingDurationSeconds();
     this.s3Client = this.initializeS3Client(storageType);
     ffmpeg.setFfmpegPath(ffmpegPath);
     ffmpeg.setFfprobePath(ffprobe.path);
@@ -91,7 +121,7 @@ export class FileStorage {
     return new Promise((resolve, reject) => {
       ffmpeg(inputPath)
         .output(tempOutputPath)
-        .outputOptions('-c:a pcm_s16le')
+        .outputOptions(PROCESSED_AUDIO_FFMPEG_OPTIONS)
         .on('end', () => {
           fs.renameSync(tempOutputPath, inputPath);
           resolve();
@@ -162,6 +192,10 @@ export class FileStorage {
         throw new Error('Could not determine audio duration.');
       }
 
+      if (durationSec > this.maxDurationSec) {
+        throw new RecordingTooLongError(durationSec, this.maxDurationSec);
+      }
+
       if (this.storageType === 'local') {
         await this.persistLocally(tempFilePath, storageKey);
         return {
@@ -170,6 +204,7 @@ export class FileStorage {
           objectKey: toPosixPath(storageKey),
           durationSec,
           bucketName: null,
+          processedAudio: getProcessedAudioMetadata(),
         };
       }
 
@@ -182,6 +217,7 @@ export class FileStorage {
         objectKey: toPosixPath(objectKey),
         durationSec,
         bucketName: this.bucketName,
+        processedAudio: getProcessedAudioMetadata(),
       };
     } catch (error) {
       console.error(`Error saving file: ${error.message}`);

@@ -4,7 +4,7 @@
   "main": "index.js",
   "scripts": {
     "start": "node src/index.js",
-    "test": "node --test src/taskProvider.test.js src/fileStorage.test.js"
+    "test": "node --test src/config.test.js src/taskProvider.test.js src/fileStorage.test.js src/index.test.js"
   },
   "type": "module",
   "keywords": [],

@@ -29,14 +29,27 @@
   display: flex;
   justify-content: space-between;
   align-items: flex-start;
-  gap: 16px;
+  gap: 20px;
   margin-bottom: 20px;
+  flex-wrap: wrap;
+}
+
+.app-header__content {
+  flex: 1 1 280px;
+  min-width: 0;
 }
 
 .app-header-actions {
   display: flex;
   gap: 12px;
   flex-wrap: wrap;
+  flex: 0 1 auto;
+  justify-content: flex-end;
+  max-width: 100%;
+}
+
+.app-header-actions > button {
+  white-space: nowrap;
 }
 
 .app-eyebrow {
@@ -133,6 +146,10 @@
   color: #a61b29;
 }
 
+.app-turnstile {
+  margin-top: 20px;
+}
+
 @media (max-width: 720px) {
   .app-shell {
     padding: 16px;
@@ -146,8 +163,13 @@
     flex-direction: column;
   }
 
+  .app-header__content {
+    width: 100%;
+  }
+
   .app-header-actions {
     width: 100%;
+    justify-content: stretch;
   }
 
   .app-header-actions > button {

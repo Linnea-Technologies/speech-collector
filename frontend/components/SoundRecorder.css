@@ -14,6 +14,35 @@
   width: 100%;
 }
 
+.recorder-transcript {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 16px;
+  color: #12324a;
+}
+
+.recorder-transcript__helper {
+  color: #4d677a;
+  font-size: 14px;
+  line-height: 1.45;
+}
+
+.recorder-transcript__helper code {
+  color: #12324a;
+  background: #eef5f8;
+  border-radius: 4px;
+  padding: 1px 4px;
+}
+
+.recorder-transcript__input {
+  border: 1px solid #c6d4de;
+  border-radius: 8px;
+  padding: 10px 12px;
+  background: #ffffff;
+  color: #12324a;
+}
+
 .recorder-actions {
   display: flex;
   gap: 12px;

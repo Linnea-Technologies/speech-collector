@@ -9,8 +9,11 @@ import type { SessionState } from "../types/session";
 import {
   infoFormConfig,
   isConsentMarkdownYesNoField,
+  isSelectInfoFormField,
+  shouldShowInfoFormField,
   type InfoFormField,
 } from "../utils/infoFormConfig";
+import { buildV1SessionMetadata, flattenSessionMetadata } from "../utils/sessionMetadata";
 import "./InfoForm.css";
 
 interface InfoFormProps {
@@ -24,42 +27,60 @@ type FormValues = Record<string, string | number | null | undefined>;
 
 const localFormConfig: InfoFormField[] = infoFormConfig;
 
+function createValidationSchema(field: InfoFormField) {
+  let baseSchema: Yup.AnySchema;
+
+  switch (field.type) {
+    case "consent_markdown_yes_no":
+      baseSchema = Yup.string().oneOf(
+        field.options.map((option) => option.value),
+        "Choose Yes or No"
+      );
+      break;
+    case "select":
+      baseSchema = Yup.string().oneOf(
+        field.options.map((option) => option.value),
+        "Choose one of the options"
+      );
+      break;
+    case "email":
+      baseSchema = Yup.string().email("Enter a valid value");
+      break;
+    case "date":
+      baseSchema = Yup.date().typeError("Enter a valid value");
+      break;
+    case "integer":
+      baseSchema = Yup.number().integer("Enter a whole number").typeError("Enter a valid value");
+      break;
+    case "float":
+      baseSchema = Yup.number().typeError("Enter a valid value");
+      break;
+    case "url":
+      baseSchema = Yup.string().url("Enter a valid value");
+      break;
+    default:
+      baseSchema = Yup.string().nullable().notRequired();
+      break;
+  }
+
+  baseSchema = baseSchema.transform((value, originalValue) => (originalValue === "" ? null : value));
+
+  if (field.required && field.showWhen) {
+    return baseSchema.when(field.showWhen.field, {
+      is: field.showWhen.equals,
+      then: (schema) => schema.required("This field is required"),
+      otherwise: (schema) => schema.nullable().notRequired(),
+    });
+  }
+
+  return field.required
+    ? baseSchema.required("This field is required")
+    : baseSchema.nullable().notRequired();
+}
+
 const validationSchema = Yup.object().shape(
   localFormConfig.reduce((schema, field) => {
-    let baseSchema: Yup.AnySchema;
-
-    switch (field.type) {
-      case "consent_markdown_yes_no":
-        baseSchema = Yup.string().oneOf(
-          field.options.map((option) => option.value),
-          "Choose Yes or No"
-        );
-        break;
-      case "email":
-        baseSchema = Yup.string().email("Enter a valid value");
-        break;
-      case "date":
-        baseSchema = Yup.date().typeError("Enter a valid value");
-        break;
-      case "integer":
-        baseSchema = Yup.number().integer("Enter a whole number").typeError("Enter a valid value");
-        break;
-      case "float":
-        baseSchema = Yup.number().typeError("Enter a valid value");
-        break;
-      case "url":
-        baseSchema = Yup.string().url("Enter a valid value");
-        break;
-      default:
-        baseSchema = Yup.string().nullable().notRequired();
-        break;
-    }
-
-    baseSchema = baseSchema.transform((value, originalValue) => (originalValue === "" ? null : value));
-    schema[field.id] = field.required
-      ? baseSchema.required("This field is required")
-      : baseSchema.nullable().notRequired();
-
+    schema[field.id] = createValidationSchema(field);
     return schema;
   }, {} as Record<string, Yup.AnySchema>)
 );
@@ -80,6 +101,8 @@ const InfoForm = ({ message, canCancel = false, onCancel, onSaved }: InfoFormPro
   });
 
   const watchedValues = watch();
+  const nativeLanguageValue = watchedValues.native_language;
+  const dialectRegionValue = watchedValues.dialect_region;
   const isDecliningConsent = localFormConfig.some(
     (field) =>
       isConsentMarkdownYesNoField(field) &&
@@ -88,10 +111,23 @@ const InfoForm = ({ message, canCancel = false, onCancel, onSaved }: InfoFormPro
   );
 
   useEffect(() => {
+    const flattenedMetadata = flattenSessionMetadata(participantMetadata);
     localFormConfig.forEach((field) => {
-      setValue(field.id, (participantMetadata?.[field.id] as string | undefined) ?? "");
+      setValue(field.id, flattenedMetadata[field.id] ?? "");
     });
   }, [participantMetadata, setValue]);
+
+  useEffect(() => {
+    if (nativeLanguageValue !== "other") {
+      setValue("native_language_other", "");
+    }
+  }, [nativeLanguageValue, setValue]);
+
+  useEffect(() => {
+    if (dialectRegionValue !== "other") {
+      setValue("dialect_region_other", "");
+    }
+  }, [dialectRegionValue, setValue]);
 
   const onSubmit = async (data: FormValues) => {
     if (!sessionToken) {
@@ -101,10 +137,11 @@ const InfoForm = ({ message, canCancel = false, onCancel, onSaved }: InfoFormPro
 
     try {
       setFormMessage("");
+      const metadata = buildV1SessionMetadata(data);
       const response = await fetch(`${apiUrl}/api/update-session-metadata`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ sessionToken, metadata: data }),
+        body: JSON.stringify({ sessionToken, metadata }),
       });
 
       const result = await response.json();
@@ -129,6 +166,10 @@ const InfoForm = ({ message, canCancel = false, onCancel, onSaved }: InfoFormPro
       <form className="info-form" onSubmit={handleSubmit(onSubmit)}>
         <div className="info-form__grid">
           {localFormConfig.map((field) => {
+            if (!shouldShowInfoFormField(field, watchedValues)) {
+              return null;
+            }
+
             if (isConsentMarkdownYesNoField(field)) {
               const selectedValue =
                 typeof watchedValues[field.id] === "string" ? watchedValues[field.id] : "";
@@ -172,6 +213,37 @@ const InfoForm = ({ message, canCancel = false, onCancel, onSaved }: InfoFormPro
               );
             }
 
+            if (isSelectInfoFormField(field)) {
+              return (
+                <label key={field.id} className="info-form__field" htmlFor={field.id}>
+                  <span>
+                    {field.label}
+                    {field.required ? " *" : ""}
+                  </span>
+                  <select
+                    id={field.id}
+                    {...register(field.id)}
+                    className={
+                      errors[field.id] && isSubmitted
+                        ? "info-form__input info-form__input--error"
+                        : "info-form__input"
+                    }
+                  >
+                    <option value="">Choose...</option>
+                    {field.options.map((option) => (
+                      <option key={option.value} value={option.value}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </select>
+                  {field.helperText && <span className="info-form__hint">{field.helperText}</span>}
+                  {isSubmitted && errors[field.id] && (
+                    <span className="info-form__error">{errors[field.id]?.message as string}</span>
+                  )}
+                </label>
+              );
+            }
+
             return (
               <label key={field.id} className="info-form__field" htmlFor={field.id}>
                 <span>
@@ -188,6 +260,7 @@ const InfoForm = ({ message, canCancel = false, onCancel, onSaved }: InfoFormPro
                       : "info-form__input"
                   }
                 />
+                {field.helperText && <span className="info-form__hint">{field.helperText}</span>}
                 {isSubmitted && errors[field.id] && (
                   <span className="info-form__error">{errors[field.id]?.message as string}</span>
                 )}

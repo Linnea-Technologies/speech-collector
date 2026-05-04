@@ -13,7 +13,7 @@ const SessionEndScreen = ({
 }: SessionEndScreenProps) => {
   return (
     <section className="app-panel app-panel--narrow">
-      <span className="app-eyebrow">AINA Session</span>
+      <span className="app-eyebrow">Speech Collector</span>
       <h1 className="app-title">{title}</h1>
       <p className="app-copy">{message}</p>
       <button type="button" className="app-primary-button" onClick={onRestart}>

@@ -63,7 +63,9 @@ Important variables:
 ```env
 APP_URL=http://localhost:5173
 VITE_API_URL=http://localhost:8000
-VITE_APP_TITLE=AINA Speech Collector
+VITE_APP_TITLE=Speech Collector
+VITE_MAX_RECORDING_SECONDS=5
+VITE_TURNSTILE_SITE_KEY=
 
 PG_HOST=localhost
 PG_PORT=5432
@@ -75,6 +77,10 @@ STORAGE=local
 SOUND_RECORDINGS_PATH=tmp/recordings
 COLLECTION_AUDIO_PREFIX=short-finnish-responses/v1/audio
 SESSION_IDLE_TIMEOUT_HOURS=24
+MAX_RECORDING_SECONDS=5
+MAX_UPLOAD_BYTES=2000000
+MAX_RECORDING_DURATION_TOLERANCE_SECONDS=1
+TURNSTILE_SECRET_KEY=
 
 AWS_ACCESS_KEY_ID=
 AWS_SECRET_ACCESS_KEY=
@@ -101,6 +107,9 @@ Notes:
 - In S3 mode it is used only as a temporary processing area.
 - `COLLECTION_AUDIO_PREFIX` defines the permanent object-key prefix in S3.
 - `DATASET_AUDIO_ROOT` is optional. If empty, export derives the correct storage root from local mode or AWS S3 settings.
+- `VITE_MAX_RECORDING_SECONDS` controls the frontend auto-stop timer. `MAX_RECORDING_SECONDS` plus `MAX_RECORDING_DURATION_TOLERANCE_SECONDS` is the backend duration limit.
+- `MAX_UPLOAD_BYTES` limits multipart audio upload size before storage.
+- Leave `VITE_TURNSTILE_SITE_KEY` and `TURNSTILE_SECRET_KEY` empty for local development. Configure both for public collection.
 
 ## Database Setup
 
@@ -128,6 +137,17 @@ The seeding step uses:
 
 `AINA_TOPIC_COPIES` controls how many topic copies exist. If local testing exhausts them, raise `AINA_TOPIC_COPIES` in `.env` and rerun `pnpm run aina:seed` to add more copies. Existing copies are upserted; new higher-numbered copies are created.
 
+Note: number prompt IDs changed from digit IDs such as `1` to Finnish word IDs such as `yksi` while keeping classifier labels as digits. If your local database was seeded before that change, reset the seeded collection tables before reseeding:
+
+```sql
+DELETE FROM recordings;
+DELETE FROM participant_sessions;
+DELETE FROM tasks;
+DELETE FROM topics;
+```
+
+Then rerun `pnpm run aina:seed`. This reset deletes local test sessions and recordings, so only use it for development data.
+
 ## Run The App
 
 Install dependencies:
@@ -152,13 +172,14 @@ Ports:
 The main collection flow is:
 
 1. Volunteer opens the app.
-2. Backend starts or resumes an anonymous session.
-3. Volunteer sees the intro and metadata form.
-4. Volunteer records one prompt at a time.
-5. Each successful upload is stored and linked to the session.
-6. Volunteer can continue, refresh, or leave.
-7. Submitted recordings stay valid even if the session ends early.
-8. Completed sessions show a thank-you screen.
+2. If Turnstile is configured, the volunteer completes the human verification gate.
+3. Backend starts or resumes an anonymous session.
+4. Volunteer sees the intro and metadata form.
+5. Volunteer records one prompt at a time; each recording auto-stops after 5 seconds by default.
+6. Each successful upload is stored and linked to the session.
+7. Volunteer can continue, refresh, or leave.
+8. Submitted recordings stay valid even if the session ends early.
+9. Completed sessions show a thank-you screen.
 
 The browser stores the active session token locally so an active session can resume automatically in the same browser.
 
@@ -271,7 +292,10 @@ Export behavior:
 - includes `abandoned` sessions
 - excludes still-`active` sessions
 - filters rows to the active `STORAGE` backend before building the manifest
-- hashes `session_id` into `speaker_id`
+- uses `recordings.id` as `sample_id`
+- exports `normalized_label` and keeps `label` as its compatibility alias
+- stores Finnish prompt text separately as `prompted_word`
+- hashes the anonymous browser `device_id` into stable `speaker_id`
 - references permanent storage directly
 
 ## Validate Against audio-classifier
@@ -313,6 +337,7 @@ If you only need more test sessions and want to keep the existing prompt copies,
 
 - [docs/aina-refactor-plan.md](docs/aina-refactor-plan.md)
 - [docs/aina-s3-integration.md](docs/aina-s3-integration.md)
+- [docs/aina-data-contract.md](docs/aina-data-contract.md)
 - [docs/database-structure.md](docs/database-structure.md)
 - [docs/database-setup.md](docs/database-setup.md)
 - [docs/dev-reset-session-data.sql](docs/dev-reset-session-data.sql)

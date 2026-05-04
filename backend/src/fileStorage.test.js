@@ -5,7 +5,12 @@ import assert from 'node:assert/strict';
 
 import { inferAudioRoot } from '../../scripts/aina/exportDataset.js';
 import { getSpeechCollectorRoot, getSoundRecordingsRoot } from './config.js';
-import { buildRecordingStorageKey, FileStorage } from './fileStorage.js';
+import {
+  buildRecordingStorageKey,
+  FileStorage,
+  getProcessedAudioMetadata,
+  PROCESSED_AUDIO_FFMPEG_OPTIONS,
+} from './fileStorage.js';
 
 const originalEnv = { ...process.env };
 const cleanupPaths = [];
@@ -29,6 +34,19 @@ test('buildRecordingStorageKey uses a stable session/task layout', () => {
     buildRecordingStorageKey('session-123', 'short_finnish_responses_v1_0001_kylla'),
     'session-123/short_finnish_responses_v1_0001_kylla.wav'
   );
+});
+
+test('processed audio ffmpeg options enforce 16 kHz mono PCM WAV', () => {
+  assert.deepEqual(PROCESSED_AUDIO_FFMPEG_OPTIONS, [
+    '-c:a pcm_s16le',
+    '-ar 16000',
+    '-ac 1',
+  ]);
+  assert.deepEqual(getProcessedAudioMetadata(), {
+    sample_rate_hz: 16000,
+    channel_count: 1,
+    encoding: 'pcm_s16le',
+  });
 });
 
 test('relative SOUND_RECORDINGS_PATH resolves from the speech-collector root in backend and exporter', () => {
@@ -73,4 +91,28 @@ test('local persistence writes files under the same root the exporter publishes'
 
   assert.equal(finalPath, expectedPath);
   assert.equal(fs.readFileSync(finalPath, 'utf-8'), 'wav-data');
+});
+
+test('saveRecording returns processed audio metadata with persisted local recordings', async () => {
+  const appRoot = getSpeechCollectorRoot();
+  const testParent = path.join(appRoot, 'tmp');
+  fs.mkdirSync(testParent, { recursive: true });
+
+  const tempRoot = fs.mkdtempSync(path.join(testParent, 'processed-meta-root-'));
+  cleanupPaths.push(tempRoot);
+
+  const recordingsRoot = path.join(tempRoot, 'recordings');
+  process.env.STORAGE = 'local';
+  process.env.SOUND_RECORDINGS_PATH = path.relative(appRoot, recordingsRoot);
+
+  const storage = new FileStorage('local');
+  storage.reencodeFile = async () => {};
+  storage.getAudioDurationSec = async () => 0.82;
+
+  const result = await storage.saveRecording(
+    { buffer: Buffer.from('wav-data') },
+    { sessionId: 'session-123', taskId: 'task-456' }
+  );
+
+  assert.deepEqual(result.processedAudio, getProcessedAudioMetadata());
 });

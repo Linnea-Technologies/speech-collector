@@ -7,6 +7,9 @@ const SPEECH_COLLECTOR_ROOT = path.resolve(
   '..'
 );
 const DEFAULT_SOUND_RECORDINGS_PATH = 'tmp/recordings';
+const DEFAULT_MAX_RECORDING_SECONDS = 5;
+const DEFAULT_MAX_UPLOAD_BYTES = 2_000_000;
+const DEFAULT_MAX_RECORDING_DURATION_TOLERANCE_SECONDS = 1;
 
 function normalizePosixPrefix(prefix) {
   return (prefix || '').replace(/\\/g, '/').replace(/^\/+|\/+$/g, '');
@@ -33,6 +36,39 @@ export function getDbConnectionString() {
 export function getSessionIdleTimeoutHours() {
   const parsed = Number.parseInt(process.env.SESSION_IDLE_TIMEOUT_HOURS || '24', 10);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : 24;
+}
+
+function getPositiveIntegerEnv(name, fallback) {
+  const parsed = Number.parseInt(process.env[name] || String(fallback), 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function getNonNegativeNumberEnv(name, fallback) {
+  const parsed = Number.parseFloat(process.env[name] || String(fallback));
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback;
+}
+
+export function getMaxRecordingSeconds() {
+  return getPositiveIntegerEnv('MAX_RECORDING_SECONDS', DEFAULT_MAX_RECORDING_SECONDS);
+}
+
+export function getMaxUploadBytes() {
+  return getPositiveIntegerEnv('MAX_UPLOAD_BYTES', DEFAULT_MAX_UPLOAD_BYTES);
+}
+
+export function getMaxRecordingDurationToleranceSeconds() {
+  return getNonNegativeNumberEnv(
+    'MAX_RECORDING_DURATION_TOLERANCE_SECONDS',
+    DEFAULT_MAX_RECORDING_DURATION_TOLERANCE_SECONDS
+  );
+}
+
+export function getMaxAllowedRecordingDurationSeconds() {
+  return getMaxRecordingSeconds() + getMaxRecordingDurationToleranceSeconds();
+}
+
+export function getTurnstileSecretKey() {
+  return (process.env.TURNSTILE_SECRET_KEY || '').trim();
 }
 
 export function getCollectionAudioPrefix() {

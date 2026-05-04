@@ -8,6 +8,7 @@ import {
   buildDatasetMetadata,
   filterRowsForActiveStorage,
   inferAudioRoot,
+  pseudonymizeDeviceId,
   pseudonymizeSpeaker,
 } from './exportDataset.js';
 import { getSpeechCollectorRoot } from '../../backend/src/config.js';
@@ -89,23 +90,34 @@ test('mixed local and aws-s3 rows export only the active storage_type', () => {
   process.env.SOUND_RECORDINGS_PATH = 'tmp/recordings';
 
   const localRow = {
+    recording_id: 'recording-local',
     session_id: 'session-local',
     session_status: 'completed',
-    session_metadata: {},
+    session_metadata: {
+      schema_version: 'v1',
+      device_id: 'device-local',
+    },
     topic_id: 'short_finnish_responses_v1_0001',
     task_id: 'short_finnish_responses_v1_0001_kylla',
     storage_type: 'local',
     storage_key: 'session-local/short_finnish_responses_v1_0001_kylla.wav',
-    transcript: 'Kylla',
+    transcript: 'Kyllä',
     label: 'kylla',
     language: 'fi',
     category: 'affirmative',
     duration_sec: 0.82,
     submitted_at: '2026-04-22T10:00:00.000Z',
-    recording_metadata: {},
+    recording_metadata: {
+      schema_version: 'v1',
+      prompted_word: 'Kyllä',
+      normalized_label: 'kylla',
+      literal_transcript: null,
+      label_source: 'prompt_assumed',
+    },
   };
   const s3Row = {
     ...localRow,
+    recording_id: 'recording-s3',
     session_id: 'session-s3',
     storage_type: 'aws-s3',
     storage_key: 'session-s3/short_finnish_responses_v1_0001_kylla.wav',
@@ -123,20 +135,44 @@ test('mixed local and aws-s3 rows export only the active storage_type', () => {
     'Skipped 1 recording(s) whose storage_type did not match active STORAGE=local: aws-s3=1.'
   );
   assert.equal(dataset.audio_root, path.join(getSpeechCollectorRoot(), 'tmp', 'recordings'));
+  assert.equal(samples[0].sample_id, 'recording-local');
   assert.equal(samples[0].audio_path, localRow.storage_key);
 });
 
-test('buildSample keeps storage_key as the manifest audio_path', () => {
+test('buildSample uses recording id and v1 labels in the manifest row', () => {
   process.env.DATASET_SPEAKER_HASH_SALT = 'test-salt';
 
   const dataset = buildDatasetMetadata([], ['kylla'], 's3://aina-data/short-finnish-responses/v1/audio/');
   const sample = buildSample(
     {
+      recording_id: 'recording-123',
       session_id: 'session-123',
       session_status: 'completed',
-      session_metadata: { age_group: '20-29' },
+      session_metadata: {
+        schema_version: 'v1',
+        device_id: 'device-123',
+        demographics: {
+          age_group: '26-35',
+          gender: 'prefer_not_to_say',
+          native_language: 'fi',
+          native_language_other: null,
+          dialect_region: 'pori',
+          dialect_region_other: null,
+        },
+        environment: {
+          noise_level: 'moderate',
+          audio_hardware: 'not_sure',
+        },
+        technical: {
+          user_agent: 'Mozilla/5.0',
+          inferred_os: 'Windows',
+          inferred_browser: 'Chrome',
+          inferred_device_type: 'desktop',
+        },
+      },
       topic_id: 'short_finnish_responses_v1_0001',
       task_id: 'short_finnish_responses_v1_0001_kylla',
+      storage_type: 'local',
       storage_key: 'session-123/short_finnish_responses_v1_0001_kylla.wav',
       transcript: 'Kyllä',
       label: 'kylla',
@@ -144,15 +180,63 @@ test('buildSample keeps storage_key as the manifest audio_path', () => {
       category: 'affirmative',
       duration_sec: 0.82,
       submitted_at: '2026-04-22T10:00:00.000Z',
-      recording_metadata: {},
+      recording_metadata: {
+        schema_version: 'v1',
+        prompted_word: 'Kyllä',
+        normalized_label: 'kylla',
+        literal_transcript: 'kyl',
+        label_source: 'user_confirmed',
+        language: 'fi',
+        category: 'affirmative',
+        technical: {
+          sample_rate_hz: 48000,
+          channel_count: 1,
+        },
+        processed_audio: {
+          sample_rate_hz: 16000,
+          channel_count: 1,
+          encoding: 'pcm_s16le',
+        },
+      },
     },
     0,
     dataset
   );
 
+  assert.equal(sample.sample_id, 'recording-123');
   assert.equal(sample.audio_path, 'session-123/short_finnish_responses_v1_0001_kylla.wav');
-  assert.equal(sample.speaker_id, pseudonymizeSpeaker({ session_id: 'session-123' }));
-  assert.equal(sample.metadata.collection_session_status, 'completed');
+  assert.equal(sample.prompted_word, 'Kyllä');
+  assert.equal(sample.normalized_label, 'kylla');
+  assert.equal(sample.label, 'kylla');
+  assert.equal(sample.literal_transcript, 'kyl');
+  assert.equal(sample.label_source, 'user_confirmed');
+  assert.equal(sample.speaker_id, pseudonymizeSpeaker({ session_metadata: { device_id: 'device-123' } }));
+  assert.equal(sample.metadata.device_id, pseudonymizeDeviceId({ session_metadata: { device_id: 'device-123' } }));
+  assert.equal(sample.metadata.demographics.age_group, '26-35');
+  assert.equal(sample.metadata.environment.audio_hardware, 'not_sure');
+  assert.equal(sample.metadata.technical.inferred_browser, 'Chrome');
+  assert.equal(sample.metadata.technical.sample_rate_hz, 48000);
+  assert.deepEqual(sample.metadata.processed_audio, {
+    sample_rate_hz: 16000,
+    channel_count: 1,
+    encoding: 'pcm_s16le',
+  });
+  assert.equal(sample.metadata.collection.session_status, 'completed');
+});
+
+test('speaker id is stable for the same device id across sessions', () => {
+  process.env.DATASET_SPEAKER_HASH_SALT = 'test-salt';
+
+  const first = pseudonymizeSpeaker({
+    session_id: 'session-1',
+    session_metadata: { device_id: 'same-device' },
+  });
+  const second = pseudonymizeSpeaker({
+    session_id: 'session-2',
+    session_metadata: { device_id: 'same-device' },
+  });
+
+  assert.equal(first, second);
 });
 
 test('local manifests keep an absolute audio_root with relative audio_path values', () => {
@@ -169,6 +253,7 @@ test('local manifests keep an absolute audio_root with relative audio_path value
       session_metadata: {},
       topic_id: 'short_finnish_responses_v1_0001',
       task_id: 'short_finnish_responses_v1_0001_kylla',
+      storage_type: 'local',
       storage_key: 'session-123/short_finnish_responses_v1_0001_kylla.wav',
       transcript: 'Kylla',
       label: 'kylla',

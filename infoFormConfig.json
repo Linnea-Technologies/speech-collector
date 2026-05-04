@@ -1,37 +1,124 @@
 [
   {
     "label": "Age group",
-    "type": "text",
+    "type": "select",
     "id": "age_group",
-    "required": true
+    "required": true,
+    "options": [
+      { "value": "under_18", "label": "Under 18" },
+      { "value": "18-25", "label": "18-25" },
+      { "value": "26-35", "label": "26-35" },
+      { "value": "36-50", "label": "36-50" },
+      { "value": "51-65", "label": "51-65" },
+      { "value": "65_plus", "label": "65+" },
+      { "value": "prefer_not_to_say", "label": "Prefer not to say" }
+    ]
   },
   {
-    "label": "Primary language",
+    "label": "Gender",
+    "type": "select",
+    "id": "gender",
+    "required": true,
+    "options": [
+      { "value": "male", "label": "Male" },
+      { "value": "female", "label": "Female" },
+      { "value": "non_binary", "label": "Non-binary" },
+      { "value": "prefer_not_to_say", "label": "Prefer not to say" }
+    ]
+  },
+  {
+    "label": "Native language",
+    "type": "select",
+    "id": "native_language",
+    "required": true,
+    "options": [
+      { "value": "fi", "label": "Finnish" },
+      { "value": "sv", "label": "Swedish" },
+      { "value": "en", "label": "English" },
+      { "value": "other", "label": "Other" },
+      { "value": "prefer_not_to_say", "label": "Prefer not to say" }
+    ]
+  },
+  {
+    "label": "Please write your native language",
     "type": "text",
-    "id": "primary_language",
-    "required": true
+    "id": "native_language_other",
+    "showWhen": {
+      "field": "native_language",
+      "equals": "other"
+    }
   },
   {
     "label": "Dialect region",
-    "type": "text",
-    "id": "dialect_region"
+    "type": "select",
+    "id": "dialect_region",
+    "required": true,
+    "options": [
+      { "value": "helsinki", "label": "Helsinki" },
+      { "value": "pori", "label": "Pori" },
+      { "value": "rauma", "label": "Rauma" },
+      { "value": "turku", "label": "Turku" },
+      { "value": "tampere", "label": "Tampere" },
+      { "value": "other", "label": "Other" },
+      { "value": "not_sure", "label": "Not sure" },
+      { "value": "prefer_not_to_say", "label": "Prefer not to say" }
+    ]
   },
   {
-    "label": "Device type",
+    "label": "Please write the area/dialect",
     "type": "text",
-    "id": "device_type"
+    "id": "dialect_region_other",
+    "showWhen": {
+      "field": "dialect_region",
+      "equals": "other"
+    }
   },
   {
-    "label": "Recording environment",
-    "type": "text",
-    "id": "recording_environment"
+    "label": "Noise level",
+    "type": "select",
+    "id": "noise_level",
+    "required": true,
+    "options": [
+      { "value": "quiet", "label": "Quiet" },
+      { "value": "moderate", "label": "Some background noise" },
+      { "value": "noisy", "label": "Noisy" },
+      { "value": "not_sure", "label": "Not sure" }
+    ]
+  },
+  {
+    "label": "What are you using to record your voice?",
+    "type": "select",
+    "id": "audio_hardware",
+    "required": true,
+    "options": [
+      {
+        "value": "built_in_mic",
+        "label": "Built-in microphone on my phone/laptop"
+      },
+      {
+        "value": "wired_headset",
+        "label": "Wired headset or earphones"
+      },
+      {
+        "value": "bluetooth_headset",
+        "label": "Bluetooth headset or earbuds"
+      },
+      {
+        "value": "external_mic",
+        "label": "External microphone"
+      },
+      {
+        "value": "not_sure",
+        "label": "Not sure / I don't know"
+      }
+    ]
   },
   {
     "label": "Consent",
     "type": "consent_markdown_yes_no",
     "id": "consent_response",
     "required": true,
-    "markdown": "### Consent to participate\nBy choosing **Yes**, you confirm that:\n\n- you understand these recordings are collected for the AINA speech-classifier project\n- your voice recordings and session metadata may be stored, reviewed, and exported for research and model development\n- you are participating voluntarily and may stop before submitting more prompts",
+    "markdown": "### Consent to participate\nBy choosing **Yes**, you confirm that:\n\n- these recordings are collected for a speech-classifier project\n- your recordings and session details may be stored, reviewed, and exported for research and model development\n- an anonymous browser ID may be stored in this browser to group recordings from the same device\n- basic browser, device, and microphone information may be collected automatically to understand recording quality\n- no name, email, phone number, or real hardware serial number is collected\n- participation is voluntary and you may stop at any time",
     "options": [
       {
         "value": "yes",

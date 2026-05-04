@@ -23,6 +23,26 @@ function normalizeMetadata(metadata) {
   return metadata && typeof metadata === 'object' && !Array.isArray(metadata) ? metadata : {};
 }
 
+function isPlainObject(value) {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+
+function hasNonEmptyString(value) {
+  return typeof value === 'string' && value.trim().length > 0;
+}
+
+export function hasRequiredSessionMetadata(metadata) {
+  return (
+    isPlainObject(metadata) &&
+    metadata.schema_version === 'v1' &&
+    hasNonEmptyString(metadata.device_id) &&
+    metadata.consent_response === 'yes' &&
+    isPlainObject(metadata.demographics) &&
+    isPlainObject(metadata.environment) &&
+    isPlainObject(metadata.technical)
+  );
+}
+
 function buildSessionPayload(row) {
   return {
     id: row.id,
@@ -353,9 +373,20 @@ export class TaskProvider {
         };
       }
 
+      if (!hasRequiredSessionMetadata(session.metadata)) {
+        return {
+          success: false,
+          code: 'session_metadata_required',
+          message: 'Session details must be completed before uploading recordings.',
+        };
+      }
+
       const taskResult = await client.query(
         `
-          SELECT id
+          SELECT
+            id,
+            text,
+            COALESCE(metadata, '{}'::jsonb) AS metadata
           FROM tasks
           WHERE id = $1
             AND topic_id = $2
@@ -377,6 +408,7 @@ export class TaskProvider {
         sessionId: session.id,
         sessionToken: session.sessionToken,
         topicId: session.topicId,
+        task: taskResult.rows[0],
       };
     });
   }
@@ -424,7 +456,7 @@ export class TaskProvider {
 
       try {
         await client.query('BEGIN');
-        await client.query(
+        const insertResult = await client.query(
           `
             INSERT INTO recordings (
               session_id,
@@ -443,6 +475,7 @@ export class TaskProvider {
               duration_sec = EXCLUDED.duration_sec,
               submitted_at = EXCLUDED.submitted_at,
               metadata = EXCLUDED.metadata
+            RETURNING id
           `,
           [
             session.id,
@@ -471,6 +504,7 @@ export class TaskProvider {
           sessionStatus: finalSession.status,
           progress: finalSession.progress,
           recording: {
+            id: insertResult.rows[0]?.id,
             storageKey: recordingDetails.storageKey,
             durationSec: recordingDetails.durationSec,
           },

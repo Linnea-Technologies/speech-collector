@@ -35,8 +35,9 @@ export function ensureDirectory(dirPath) {
 export function getLabels(rows, knownLabels = []) {
   const labels = new Set(knownLabels.filter(Boolean));
   for (const row of rows) {
-    if (row.label) {
-      labels.add(row.label);
+    const normalizedLabel = row.recording_metadata?.normalized_label || row.label;
+    if (normalizedLabel) {
+      labels.add(normalizedLabel);
     }
   }
 
@@ -49,8 +50,19 @@ export function getLabels(rows, knownLabels = []) {
 
 export function pseudonymizeSpeaker(row) {
   const salt = configValue('DATASET_SPEAKER_HASH_SALT', 'development-only-salt');
-  const source = row.session_id || row.topic_id || row.task_id || 'unknown-session';
+  const source =
+    row.session_metadata?.device_id || row.session_id || row.topic_id || row.task_id || 'unknown-session';
   return `spk_${createHash('sha256').update(`${salt}:${source}`).digest('hex').slice(0, 12)}`;
+}
+
+export function pseudonymizeDeviceId(row) {
+  const deviceId = row.session_metadata?.device_id;
+  if (!deviceId) {
+    return null;
+  }
+
+  const salt = configValue('DATASET_SPEAKER_HASH_SALT', 'development-only-salt');
+  return `dev_${createHash('sha256').update(`${salt}:${deviceId}`).digest('hex').slice(0, 12)}`;
 }
 
 export function inferAudioRoot() {
@@ -78,6 +90,10 @@ export function inferAudioRoot() {
 }
 
 export function getSampleId(row, index) {
+  if (row.recording_id) {
+    return row.recording_id;
+  }
+
   const language = row.language || configValue('DATASET_LANGUAGE', 'fi');
   return `${language}_${String(index + 1).padStart(6, '0')}`;
 }
@@ -116,24 +132,60 @@ export function buildDatasetMetadata(rows, labels, audioRoot) {
 
 export function buildSample(row, index, dataset) {
   const sampleId = getSampleId(row, index);
+  const recordingMetadata = row.recording_metadata || {};
+  const sessionMetadata = row.session_metadata || {};
+  const normalizedLabel = recordingMetadata.normalized_label || row.label;
+  const promptedWord = recordingMetadata.prompted_word || row.transcript;
+  const language = recordingMetadata.language || row.language || dataset.language;
+  const category = recordingMetadata.category || row.category || null;
+  const sessionTechnical =
+    sessionMetadata.technical && typeof sessionMetadata.technical === 'object'
+      ? sessionMetadata.technical
+      : {};
+  const recordingTechnical =
+    recordingMetadata.technical && typeof recordingMetadata.technical === 'object'
+      ? recordingMetadata.technical
+      : {};
+
   return {
     sample_id: sampleId,
     audio_path: row.storage_key,
-    label: row.label,
-    transcript: row.transcript,
-    language: row.language || dataset.language,
+    prompted_word: promptedWord,
+    normalized_label: normalizedLabel,
+    label: normalizedLabel,
+    transcript: promptedWord,
+    literal_transcript: recordingMetadata.literal_transcript ?? null,
+    label_source: recordingMetadata.label_source || 'prompt_assumed',
+    language,
     duration_sec: getDurationSec(row),
     split: row.recording_metadata?.split || null,
     source: 'real',
     speaker_id: pseudonymizeSpeaker(row),
     metadata: {
-      ...(row.session_metadata || {}),
-      collection_topic_id: row.topic_id,
-      original_task_id: row.task_id,
-      collection_session_id: row.session_id,
-      collection_session_status: row.session_status,
-      category: row.category,
-      submitted_at: row.submitted_at,
+      schema_version: recordingMetadata.schema_version || sessionMetadata.schema_version || 'v1',
+      device_id: pseudonymizeDeviceId(row),
+      demographics: sessionMetadata.demographics || {},
+      environment: sessionMetadata.environment || {},
+      technical: {
+        ...sessionTechnical,
+        ...recordingTechnical,
+      },
+      processed_audio: recordingMetadata.processed_audio || null,
+      collection: {
+        topic_id: row.topic_id,
+        task_id: row.task_id,
+        session_id: row.session_id,
+        session_status: row.session_status,
+        submitted_at: row.submitted_at,
+        storage_type: row.storage_type,
+        category,
+      },
+      storage: {
+        storage_type: row.storage_type,
+        storage_key: row.storage_key,
+        object_key: recordingMetadata.storage?.object_key || recordingMetadata.object_key || null,
+        bucket_name: recordingMetadata.storage?.bucket_name || recordingMetadata.bucket_name || null,
+      },
     },
   };
 }
@@ -166,6 +218,7 @@ async function fetchLabelVocabulary(client) {
 async function fetchCompletedRows(client) {
   const result = await client.query(`
     SELECT
+      r.id AS recording_id,
       ps.id AS session_id,
       ps.status AS session_status,
       COALESCE(ps.metadata, '{}'::jsonb) AS session_metadata,
