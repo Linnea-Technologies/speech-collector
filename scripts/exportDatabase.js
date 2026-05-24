@@ -3,10 +3,12 @@ import * as fs from 'fs';
 import { config } from 'dotenv';
 import { writeToStream } from 'fast-csv';
 
+const EXPORT_TABLES = ['participant_sessions', 'recordings', 'topics', 'tasks'];
+
 function createDbClient() {
     config(); // Load environment variables from .env file
     const { Client } = pkg;
-    const password = encodeURIComponent(process.env.PG_PASSWORD); // Construct the connection string from environment variables
+    const password = encodeURIComponent(process.env.PG_PASSWORD || ''); // Construct the connection string from environment variables
     const connString = `postgresql://${process.env.PG_USER}:${password}@${process.env.PG_HOST}:${process.env.PG_PORT}/${process.env.PG_DATABASE}`;
     const client = new Client({ connectionString: connString });    // Initialize PostgreSQL client
     return client;
@@ -14,6 +16,9 @@ function createDbClient() {
 
 // Function to export table to CSV
 async function exportTableToCSV(tableName) {
+    if (!EXPORT_TABLES.includes(tableName)) {
+        throw new Error(`Unsupported table export: ${tableName}`);
+    }
     const client = createDbClient();
     try {
         // Connect to PostgreSQL
@@ -36,6 +41,6 @@ async function exportTableToCSV(tableName) {
 }
 
 // Run the function
-await exportTableToCSV('users');
-await exportTableToCSV('topics');
-await exportTableToCSV('tasks');
+for (const tableName of EXPORT_TABLES) {
+    await exportTableToCSV(tableName);
+}

@@ -1,181 +1,292 @@
-import { useState, useContext, useEffect } from "react";
-import {
-  MDBContainer,
-  MDBRow,
-  MDBCol,
-  MDBCard,
-  MDBCardBody,
-  MDBInput,
-  MDBBtn
-} from "mdb-react-ui-kit";
+import { useContext, useEffect, useState } from "react";
 import { useForm } from "react-hook-form";
 import { yupResolver } from "@hookform/resolvers/yup";
+import ReactMarkdown from "react-markdown";
 import * as Yup from "yup";
+
+import SessionContext from "../contexts/SessionProvider";
+import type { SessionState } from "../types/session";
+import {
+  infoFormConfig,
+  isConsentMarkdownYesNoField,
+  isSelectInfoFormField,
+  shouldShowInfoFormField,
+  type InfoFormField,
+} from "../utils/infoFormConfig";
+import { buildV1SessionMetadata, flattenSessionMetadata } from "../utils/sessionMetadata";
 import "./InfoForm.css";
-import AuthContext from "../contexts/AuthProvider";
-import formConfig from "../../infoFormConfig.json"; // Import the config file
 
-
-// Define types for the component props
 interface InfoFormProps {
   message: string;
-  onContinue: () => void;
+  canCancel?: boolean;
+  onCancel?: () => void;
+  onSaved: (session: SessionState) => Promise<void> | void;
 }
 
-// Define type for formConfig items
-interface FormField {
-  id: string
-  label: string
-  type: string
-  required?: boolean
-}
-const localFormConfig: FormField[] = formConfig as FormField[];
+type FormValues = Record<string, string | number | null | undefined>;
 
-const InfoForm = ({ message, onContinue }: InfoFormProps) => {
-  const [formMessage, setFormMessage] = useState<string | null>(null);
-  const { userName, userMetadata, setUserMetadata } = useContext(AuthContext);
+const localFormConfig: InfoFormField[] = infoFormConfig;
+
+function createValidationSchema(field: InfoFormField) {
+  let baseSchema: Yup.AnySchema;
+
+  switch (field.type) {
+    case "consent_markdown_yes_no":
+      baseSchema = Yup.string().oneOf(
+        field.options.map((option) => option.value),
+        "Choose Yes or No"
+      );
+      break;
+    case "select":
+      baseSchema = Yup.string().oneOf(
+        field.options.map((option) => option.value),
+        "Choose one of the options"
+      );
+      break;
+    case "email":
+      baseSchema = Yup.string().email("Enter a valid value");
+      break;
+    case "date":
+      baseSchema = Yup.date().typeError("Enter a valid value");
+      break;
+    case "integer":
+      baseSchema = Yup.number().integer("Enter a whole number").typeError("Enter a valid value");
+      break;
+    case "float":
+      baseSchema = Yup.number().typeError("Enter a valid value");
+      break;
+    case "url":
+      baseSchema = Yup.string().url("Enter a valid value");
+      break;
+    default:
+      baseSchema = Yup.string().nullable().notRequired();
+      break;
+  }
+
+  baseSchema = baseSchema.transform((value, originalValue) => (originalValue === "" ? null : value));
+
+  if (field.required && field.showWhen) {
+    return baseSchema.when(field.showWhen.field, {
+      is: field.showWhen.equals,
+      then: (schema) => schema.required("This field is required"),
+      otherwise: (schema) => schema.nullable().notRequired(),
+    });
+  }
+
+  return field.required
+    ? baseSchema.required("This field is required")
+    : baseSchema.nullable().notRequired();
+}
+
+const validationSchema = Yup.object().shape(
+  localFormConfig.reduce((schema, field) => {
+    schema[field.id] = createValidationSchema(field);
+    return schema;
+  }, {} as Record<string, Yup.AnySchema>)
+);
+
+const InfoForm = ({ message, canCancel = false, onCancel, onSaved }: InfoFormProps) => {
+  const { sessionToken, participantMetadata, setParticipantMetadata } = useContext(SessionContext);
+  const [formMessage, setFormMessage] = useState<string>("");
   const apiUrl = import.meta.env.VITE_API_URL;
 
-  // Define the shape of form data
-  type FormValues = {
-    [key: string]: string | undefined | null;
-  };
-  // Define validation schema using Yup
-  const validationSchema = Yup.object().shape(
-    formConfig.reduce((schema, field) => {
-      let baseSchema: Yup.AnySchema;
-      // Initialize the base schema based on the field type
-      switch (field.type) {
-        case 'email':
-          baseSchema = Yup.string().email('Invalid input');
-          break;
-        case 'date':
-          baseSchema = Yup.date().typeError('Invalid input');
-          break;
-        case 'integer':
-          baseSchema = Yup.number().integer('Must be integer').typeError('Invalid input');
-          break;
-        case 'float':
-          baseSchema = Yup.number().typeError('Invalid input');
-          break;
-        case 'url':
-          baseSchema = Yup.string().url('Must be a url').typeError('Invalid input');
-          break;
-        default:
-          baseSchema = Yup.string().nullable().notRequired();
-          break;
-      }
-      baseSchema = baseSchema.transform(
-        (value, originalValue) => originalValue === "" ? null : value
-      )
-
-      baseSchema = field.required ? 
-      baseSchema.required('This field is required') :
-      baseSchema.nullable().notRequired();
-
-      schema[field.id] = baseSchema;
-      return schema;
-    }, {} as Record<string, Yup.AnySchema>)
-  );
-
-  // Set up React Hook Form with Yup validation
   const {
     register,
     handleSubmit,
+    watch,
     formState: { errors, isSubmitting, isSubmitted },
     setValue,
   } = useForm<FormValues>({
-    resolver: yupResolver(validationSchema)
+    resolver: yupResolver(validationSchema),
   });
 
-  // Populate form values when userMetadata changes
+  const watchedValues = watch();
+  const nativeLanguageValue = watchedValues.native_language;
+  const dialectRegionValue = watchedValues.dialect_region;
+  const isDecliningConsent = localFormConfig.some(
+    (field) =>
+      isConsentMarkdownYesNoField(field) &&
+      typeof watchedValues[field.id] === "string" &&
+      watchedValues[field.id] === "no"
+  );
+
   useEffect(() => {
-    if (userMetadata) {
-      localFormConfig.forEach((field) => {
-        setValue(field.id, userMetadata?.[field.id]);
-      });
+    const flattenedMetadata = flattenSessionMetadata(participantMetadata);
+    localFormConfig.forEach((field) => {
+      setValue(field.id, flattenedMetadata[field.id] ?? "");
+    });
+  }, [participantMetadata, setValue]);
+
+  useEffect(() => {
+    if (nativeLanguageValue !== "other") {
+      setValue("native_language_other", "");
     }
-  }, [userMetadata, setValue]);
+  }, [nativeLanguageValue, setValue]);
+
+  useEffect(() => {
+    if (dialectRegionValue !== "other") {
+      setValue("dialect_region_other", "");
+    }
+  }, [dialectRegionValue, setValue]);
 
   const onSubmit = async (data: FormValues) => {
+    if (!sessionToken) {
+      setFormMessage("A session is required before saving details.");
+      return;
+    }
+
     try {
-      setFormMessage(null);
-      const response = await fetch(`${apiUrl}/api/update-user-metadata`, {
+      setFormMessage("");
+      const metadata = buildV1SessionMetadata(data);
+      const response = await fetch(`${apiUrl}/api/update-session-metadata`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ username: userName, metadata: data }),
+        body: JSON.stringify({ sessionToken, metadata }),
       });
-      if (response.ok) {
-        setUserMetadata(data);
-        setFormMessage("Saved.")
-      } else {
-        setFormMessage("Failed to save, try again.");
-        throw new Error("Server failed.");
+
+      const result = await response.json();
+      if (!result.success) {
+        throw new Error(result.message || "Could not save session details.");
       }
+
+      setParticipantMetadata(result.session.metadata || {});
+      setFormMessage("Saved.");
+      await onSaved(result.session as SessionState);
     } catch (error) {
-      console.error("Error while updating user information:", error);
+      setFormMessage(error instanceof Error ? error.message : "Could not save session details.");
     }
   };
 
   return (
-    <form onSubmit={handleSubmit(onSubmit)}>
-      <MDBContainer fluid>
-        <MDBRow className="d-flex justify-content-center align-items-center h-100">
-          <MDBCard
-            className="bg-dark text-white my-5 mx-auto"
-            style={{ borderRadius: "1rem", maxWidth: "400px" }}
-          >
-            <MDBCardBody className="p-5 d-flex flex-column align-items-center mx-auto w-100">
-              <p>{message}</p>
-              {formConfig.map((field) => (
-                <div key={field.id} className="mb-4 mx-5 w-100">
-                  <label htmlFor={field.id} className="form-label text-white">
-                    {`${field.label}${field.required ? " (required)" : " (optional)"}`}
-                  </label>
-                  <MDBInput
-                    id={field.id}
-                    type={field.type}
-                    size="lg"
-                    {...register(field.id)}
-                    className={`form-control ${errors[field.id] ? "is-invalid" : ""}`}
-                  />
-                  {/* Show error message only if the form has been submitted */}
-                  {isSubmitted && errors[field.id] && (
-                    <div className="custom-error">{errors[field.id]?.message}</div>
-                  )}
-                </div>
-              ))}
+    <section className="app-panel app-panel--wide">
+      <span className="app-eyebrow">Session details</span>
+      <h1 className="app-title">Recording conditions</h1>
+      <p className="app-copy">{message}</p>
 
-              {/* Row for buttons */}
-              <MDBRow className="w-100 mt-3 d-flex justify-content-between">
-                <MDBCol size="6" className="d-flex justify-content-center">
-                  <MDBBtn type="submit" color="light" disabled={isSubmitting}>
-                    Save
-                  </MDBBtn>
-                </MDBCol>
-                <MDBCol size="6" className="d-flex justify-content-center">
-                  <MDBBtn
-                    type="button"
-                    color="light"
-                    onClick={() => handleSubmit(onSubmit)().then(onContinue)}
-                    disabled={isSubmitting}
+      <form className="info-form" onSubmit={handleSubmit(onSubmit)}>
+        <div className="info-form__grid">
+          {localFormConfig.map((field) => {
+            if (!shouldShowInfoFormField(field, watchedValues)) {
+              return null;
+            }
+
+            if (isConsentMarkdownYesNoField(field)) {
+              const selectedValue =
+                typeof watchedValues[field.id] === "string" ? watchedValues[field.id] : "";
+
+              return (
+                <fieldset key={field.id} className="info-form__fieldset">
+                  <legend id={`${field.id}-legend`} className="info-form__legend">
+                    {field.label}
+                    {field.required ? " *" : ""}
+                  </legend>
+                  <div className="info-form__markdown-box">
+                    <ReactMarkdown>{field.markdown}</ReactMarkdown>
+                  </div>
+                  <div
+                    className="info-form__radio-group"
+                    role="radiogroup"
+                    aria-labelledby={`${field.id}-legend`}
                   >
-                    Save and Continue
-                  </MDBBtn>
-                </MDBCol>
-              </MDBRow>
+                    {field.options.map((option) => (
+                      <label key={option.value} className="info-form__radio-option">
+                        <input
+                          type="radio"
+                          value={option.value}
+                          {...register(field.id)}
+                          className="info-form__radio-input"
+                        />
+                        <span>{option.label}</span>
+                      </label>
+                    ))}
+                  </div>
+                  {selectedValue === "no" && (
+                    <p className="info-form__hint">
+                      {field.declineMessage ||
+                        "Choosing No will save your response and close this session before any prompts are shown."}
+                    </p>
+                  )}
+                  {isSubmitted && errors[field.id] && (
+                    <span className="info-form__error">{errors[field.id]?.message as string}</span>
+                  )}
+                </fieldset>
+              );
+            }
 
-              {/* General error message at the bottom */}
-              {(
-                <p className="mt-3 text-success">
-                  {formMessage}
-                </p>
-              )}
-            </MDBCardBody>
-          </MDBCard>
-        </MDBRow>
-      </MDBContainer>
-    </form>
+            if (isSelectInfoFormField(field)) {
+              return (
+                <label key={field.id} className="info-form__field" htmlFor={field.id}>
+                  <span>
+                    {field.label}
+                    {field.required ? " *" : ""}
+                  </span>
+                  <select
+                    id={field.id}
+                    {...register(field.id)}
+                    className={
+                      errors[field.id] && isSubmitted
+                        ? "info-form__input info-form__input--error"
+                        : "info-form__input"
+                    }
+                  >
+                    <option value="">Choose...</option>
+                    {field.options.map((option) => (
+                      <option key={option.value} value={option.value}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </select>
+                  {field.helperText && <span className="info-form__hint">{field.helperText}</span>}
+                  {isSubmitted && errors[field.id] && (
+                    <span className="info-form__error">{errors[field.id]?.message as string}</span>
+                  )}
+                </label>
+              );
+            }
+
+            return (
+              <label key={field.id} className="info-form__field" htmlFor={field.id}>
+                <span>
+                  {field.label}
+                  {field.required ? " *" : ""}
+                </span>
+                <input
+                  id={field.id}
+                  type={field.type === "integer" || field.type === "float" ? "number" : field.type}
+                  {...register(field.id)}
+                  className={
+                    errors[field.id] && isSubmitted
+                      ? "info-form__input info-form__input--error"
+                      : "info-form__input"
+                  }
+                />
+                {field.helperText && <span className="info-form__hint">{field.helperText}</span>}
+                {isSubmitted && errors[field.id] && (
+                  <span className="info-form__error">{errors[field.id]?.message as string}</span>
+                )}
+              </label>
+            );
+          })}
+        </div>
+
+        <div className="info-form__actions">
+          {canCancel && onCancel && (
+            <button type="button" className="app-secondary-button" onClick={onCancel} disabled={isSubmitting}>
+              Cancel
+            </button>
+          )}
+          <button type="submit" className="app-primary-button" disabled={isSubmitting}>
+            {isDecliningConsent
+              ? "Save and exit"
+              : canCancel
+                ? "Save changes"
+                : "Save and continue"}
+          </button>
+        </div>
+
+        {formMessage && <p className="app-inline-message">{formMessage}</p>}
+      </form>
+    </section>
   );
 };
 

@@ -24,5 +24,10 @@ dist-ssr
 *.sln
 *.sw?
 *.py
+.env
+.env.*
+!.env.example
 .env.local
+tmp/
+exports/
 scripts/spoken-squad/pushLittle.js

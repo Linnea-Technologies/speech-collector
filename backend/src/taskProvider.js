@@ -1,169 +1,606 @@
+import { randomUUID } from 'crypto';
 import pkg from 'pg';
+
 const { Client } = pkg;
 
+export const SESSION_STATUS = {
+  ACTIVE: 'active',
+  COMPLETED: 'completed',
+  ABANDONED: 'abandoned',
+};
+
+export function calculateProgress(totalTasks, completedTasks) {
+  const total = Number.parseInt(totalTasks, 10) || 0;
+  const completed = Number.parseInt(completedTasks, 10) || 0;
+  return {
+    totalTasks: total,
+    completedTasks: completed,
+    remainingTasks: Math.max(total - completed, 0),
+  };
+}
+
+function normalizeMetadata(metadata) {
+  return metadata && typeof metadata === 'object' && !Array.isArray(metadata) ? metadata : {};
+}
+
+function isPlainObject(value) {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+
+function hasNonEmptyString(value) {
+  return typeof value === 'string' && value.trim().length > 0;
+}
+
+export function hasRequiredSessionMetadata(metadata) {
+  return (
+    isPlainObject(metadata) &&
+    metadata.schema_version === 'v1' &&
+    hasNonEmptyString(metadata.device_id) &&
+    metadata.consent_response === 'yes' &&
+    isPlainObject(metadata.demographics) &&
+    isPlainObject(metadata.environment) &&
+    isPlainObject(metadata.technical)
+  );
+}
+
+function buildSessionPayload(row) {
+  return {
+    id: row.id,
+    sessionToken: row.session_token,
+    topicId: row.topic_id,
+    topicName: row.topic_name,
+    status: row.status,
+    metadata: normalizeMetadata(row.metadata),
+    progress: calculateProgress(row.task_count, row.completed_task_count),
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    lastActivityAt: row.last_activity_at,
+    completedAt: row.completed_at,
+    exitedAt: row.exited_at,
+  };
+}
+
 export class TaskProvider {
-  constructor(connString, maxTopicsPerUser = null) {
-    this.maxTopicsPerUser = maxTopicsPerUser;
+  constructor(connString, options = {}) {
     this.connString = connString;
-  }
-  
-  async connect() {
-    this.client = new Client({ connectionString: this.connString });
-    await this.client.connect();
+    this.sessionIdleTimeoutHours = options.sessionIdleTimeoutHours || 24;
   }
 
-  async close() {
-    if (this.client) {
-      await this.client.end();
+  async withClient(run) {
+    const client = new Client({ connectionString: this.connString });
+    await client.connect();
+    try {
+      return await run(client);
+    } finally {
+      await client.end();
     }
   }
 
-  async getTask(username) {
-    try {
-      // Connect to the database
-      await this.connect();
-  
-      // Check if the user exists and get the assigned topic and completed topics outside of a transaction
-      const userQuery = await this.client.query(`
-        SELECT assigned_topic, completed_topics FROM users WHERE username = $1
-      `, [username]);
-      
-      if (userQuery.rowCount === 0) {
-        return { success: false, message: "No such user in the database" };
+  async expireStaleSessions(client) {
+    await client.query(
+      `
+        UPDATE participant_sessions
+        SET status = $2,
+            exited_at = COALESCE(exited_at, NOW()),
+            updated_at = NOW()
+        WHERE status = $1
+          AND last_activity_at < NOW() - ($3::integer * INTERVAL '1 hour')
+      `,
+      [SESSION_STATUS.ACTIVE, SESSION_STATUS.ABANDONED, this.sessionIdleTimeoutHours]
+    );
+  }
+
+  async getSessionSummaryByToken(client, sessionToken) {
+    const result = await client.query(
+      `
+        SELECT
+          ps.id,
+          ps.session_token,
+          ps.topic_id,
+          ps.status,
+          COALESCE(ps.metadata, '{}'::jsonb) AS metadata,
+          ps.created_at,
+          ps.updated_at,
+          ps.last_activity_at,
+          ps.completed_at,
+          ps.exited_at,
+          t.name AS topic_name,
+          t.task_count,
+          COUNT(r.id)::integer AS completed_task_count
+        FROM participant_sessions ps
+        JOIN topics t
+          ON t.id = ps.topic_id
+        LEFT JOIN recordings r
+          ON r.session_id = ps.id
+        WHERE ps.session_token = $1
+        GROUP BY
+          ps.id,
+          ps.session_token,
+          ps.topic_id,
+          ps.status,
+          ps.metadata,
+          ps.created_at,
+          ps.updated_at,
+          ps.last_activity_at,
+          ps.completed_at,
+          ps.exited_at,
+          t.name,
+          t.task_count
+      `,
+      [sessionToken]
+    );
+
+    if (result.rowCount === 0) {
+      return null;
+    }
+
+    return buildSessionPayload(result.rows[0]);
+  }
+
+  async touchSession(client, sessionId) {
+    await client.query(
+      `
+        UPDATE participant_sessions
+        SET updated_at = NOW(),
+            last_activity_at = NOW()
+        WHERE id = $1
+      `,
+      [sessionId]
+    );
+  }
+
+  async markSessionCompleted(client, sessionId) {
+    await client.query(
+      `
+        UPDATE participant_sessions
+        SET status = $2,
+            completed_at = COALESCE(completed_at, NOW()),
+            updated_at = NOW(),
+            last_activity_at = NOW()
+        WHERE id = $1
+      `,
+      [sessionId, SESSION_STATUS.COMPLETED]
+    );
+  }
+
+  async startSession(existingToken = null) {
+    return this.withClient(async (client) => {
+      await this.expireStaleSessions(client);
+
+      if (existingToken) {
+        const existingSession = await this.getSessionSummaryByToken(client, existingToken);
+        if (existingSession?.status === SESSION_STATUS.ACTIVE) {
+          await this.touchSession(client, existingSession.id);
+          return {
+            success: true,
+            resumed: true,
+            session: await this.getSessionSummaryByToken(client, existingToken),
+          };
+        }
       }
-  
-      let assignedTopicId = userQuery.rows[0].assigned_topic;
-      let completedTopicCount = userQuery.rows[0].completed_topics.length;
-  
-      // Begin transaction only when a new topic needs to be assigned
-      if (!assignedTopicId && completedTopicCount < this.maxTopicsPerUser) {
-        await this.client.query('BEGIN');
-  
-        // Lock an available topic for assignment to prevent race conditions
-        const topicQuery = await this.client.query(`
-          SELECT id FROM topics
-          WHERE assigned = false
+
+      const sessionToken = randomUUID();
+
+      try {
+        await client.query('BEGIN');
+
+        // Topic copies are intentionally single-use. Once a participant_sessions row exists for
+        // a topic, that copy is not reused, even after the session is completed or abandoned.
+        const topicResult = await client.query(`
+          SELECT t.id
+          FROM topics t
+          WHERE NOT EXISTS (
+            SELECT 1
+            FROM participant_sessions ps
+            WHERE ps.topic_id = t.id
+          )
+          ORDER BY t.id ASC
           LIMIT 1
           FOR UPDATE SKIP LOCKED
         `);
-  
-        if (topicQuery.rowCount > 0) {
-          assignedTopicId = topicQuery.rows[0].id;
-  
-          // Update the user and mark the topic as assigned within the same transaction
-          await this.client.query(`
-            UPDATE users 
-            SET assigned_topic = $1
-            WHERE username = $2;
-          `, [assignedTopicId, username]);
-  
-          await this.client.query(`
-            UPDATE topics
-            SET assigned = true
-            WHERE id = $1;
-          `, [assignedTopicId]);
-  
-          // Commit the transaction after updates
-          await this.client.query('COMMIT');
-        } else {
-          // Rollback if no topics are available (or already locked)
-          await this.client.query('ROLLBACK');
-          return { success: false, message: "No available topics to assign." };
+
+        if (topicResult.rowCount === 0) {
+          await client.query('ROLLBACK');
+          return {
+            success: false,
+            code: 'no_topics',
+            sessionStatus: 'unavailable',
+            message: 'No prompt sets are currently available.',
+          };
         }
-      } else if (completedTopicCount >= this.maxTopicsPerUser) {
-        return { success: false, message: `You completed the maximum number of topics assigned to you. Thank you ❤️` };
+
+        const topicId = topicResult.rows[0].id;
+        await client.query(
+          `
+            INSERT INTO participant_sessions (session_token, topic_id, status)
+            VALUES ($1, $2, $3)
+          `,
+          [sessionToken, topicId, SESSION_STATUS.ACTIVE]
+        );
+
+        await client.query('COMMIT');
+        return {
+          success: true,
+          resumed: false,
+          session: await this.getSessionSummaryByToken(client, sessionToken),
+        };
+      } catch (error) {
+        await client.query('ROLLBACK').catch(() => {});
+        console.error('Error starting session:', error);
+        return {
+          success: false,
+          code: 'start_session_failed',
+          message: 'Could not start a new session.',
+        };
       }
-  
-      // Get the first incomplete task within the assigned topic outside of a transaction
-      const taskQuery = await this.client.query(`
-        SELECT * FROM tasks
-        WHERE topic_id = $1 AND completed = false
-        ORDER BY task_idx ASC
-        LIMIT 1
-      `, [assignedTopicId]);
-  
-      const task = taskQuery.rows[0];
-      if (task) {
-        return { success: true, task: task };
-      } else {
-        return { success: false, message: `No unassigned tasks available in topic ${assignedTopicId}, try again.` };
-      }
-    } catch (error) {
-      // Handle errors and rollback if needed
-      await this.client.query('ROLLBACK').catch(() => {});
-      console.error("Error getting a task:", error);
-      return { success: false, message: 'An internal server error occurred' };
-    } finally {
-      // Close the database connection
-      await this.close();
-    }
+    });
   }
 
-  async submitTask(taskId) {
-    try {
-      // Connect to the database
-      await this.connect();
+  async getTask(sessionToken) {
+    return this.withClient(async (client) => {
+      await this.expireStaleSessions(client);
+      const session = await this.getSessionSummaryByToken(client, sessionToken);
 
-      // Begin a read-only operation outside of a transaction to get task details
-      const taskInfoQuery = await this.client.query(`
-        WITH task_info AS (
+      if (!session) {
+        return {
+          success: false,
+          code: 'invalid_session',
+          message: 'Session was not found.',
+        };
+      }
+
+      if (session.status !== SESSION_STATUS.ACTIVE) {
+        return {
+          success: true,
+          sessionStatus: session.status,
+          session,
+          task: null,
+          progress: session.progress,
+          message:
+            session.status === SESSION_STATUS.COMPLETED
+              ? 'Thank you for completing this session.'
+              : 'This session has already been closed.',
+        };
+      }
+
+      const taskResult = await client.query(
+        `
           SELECT
-            t.id AS topic_id,
-            t.task_count,
-            tk.task_idx
-          FROM topics t
-          JOIN tasks tk ON t.id = tk.topic_id
-          WHERE tk.id = $1
-        )
-        SELECT topic_id, task_idx, task_count, 
-              (task_idx >= task_count - 1) AS has_reached_task_count
-        FROM task_info;
-      `, [taskId]);
+            tk.id,
+            tk.topic_id,
+            tk.task_idx,
+            tk.text,
+            COALESCE(tk.metadata, '{}'::jsonb) AS metadata
+          FROM tasks tk
+          WHERE tk.topic_id = $1
+            AND NOT EXISTS (
+              SELECT 1
+              FROM recordings r
+              WHERE r.session_id = $2
+                AND r.task_id = tk.id
+            )
+          ORDER BY tk.task_idx ASC
+          LIMIT 1
+        `,
+        [session.topicId, session.id]
+      );
 
-      if (taskInfoQuery.rowCount === 0) {
-        return { success: false, message: "Task not found or invalid task ID." };
+      if (taskResult.rowCount === 0) {
+        await this.markSessionCompleted(client, session.id);
+        const completedSession = await this.getSessionSummaryByToken(client, sessionToken);
+        return {
+          success: true,
+          sessionStatus: SESSION_STATUS.COMPLETED,
+          session: completedSession,
+          task: null,
+          progress: completedSession.progress,
+          message: 'Thank you for completing this session.',
+        };
       }
 
-      const taskInfo = taskInfoQuery.rows[0];
-      const topicId = taskInfo.topic_id;
-      const hasReachedTaskCount = taskInfo.has_reached_task_count;
+      await this.touchSession(client, session.id);
+      const refreshedSession = await this.getSessionSummaryByToken(client, sessionToken);
 
-      // Begin transaction for update operations
-      await this.client.query('BEGIN');
+      return {
+        success: true,
+        sessionStatus: SESSION_STATUS.ACTIVE,
+        session: refreshedSession,
+        task: taskResult.rows[0],
+        progress: refreshedSession.progress,
+      };
+    });
+  }
 
-      // Mark the task as completed
-      await this.client.query(`
-        UPDATE tasks
-        SET completed = true
-        WHERE id = $1;
-      `, [taskId]);
+  async updateSessionMetadata(sessionToken, metadata) {
+    return this.withClient(async (client) => {
+      await this.expireStaleSessions(client);
+      const session = await this.getSessionSummaryByToken(client, sessionToken);
 
-      if (hasReachedTaskCount) {
-        // Update the topic and users if all tasks are completed in the topic
-        await this.client.query(`
-          UPDATE topics
-          SET completed = true
-          WHERE id = $1;
-        `, [topicId]);
-
-        await this.client.query(`
-          UPDATE users
-          SET completed_topics = completed_topics || assigned_topic, assigned_topic = NULL
-          WHERE assigned_topic = $1;
-        `, [topicId]);
+      if (!session) {
+        return {
+          success: false,
+          code: 'invalid_session',
+          message: 'Session was not found.',
+        };
       }
 
-      // Commit the transaction
-      await this.client.query('COMMIT');
-      return { success: true };
-    } catch (error) {
-      // Rollback the transaction in case of an error
-      await this.client.query('ROLLBACK').catch(() => { });
-      console.error("Error submitting the task:", error);
-      return { success: false };
-    } finally {
-      // Close the database connection
-      await this.close();
-    }
+      if (session.status !== SESSION_STATUS.ACTIVE) {
+        return {
+          success: false,
+          code: 'session_not_active',
+          message: 'Only active sessions can be updated.',
+          session,
+        };
+      }
+
+      await client.query(
+        `
+          UPDATE participant_sessions
+          SET metadata = COALESCE(metadata, '{}'::jsonb) || $2::jsonb,
+              updated_at = NOW(),
+              last_activity_at = NOW()
+          WHERE session_token = $1
+        `,
+        [sessionToken, normalizeMetadata(metadata)]
+      );
+
+      return {
+        success: true,
+        session: await this.getSessionSummaryByToken(client, sessionToken),
+      };
+    });
+  }
+
+  async getUploadTarget(sessionToken, taskId) {
+    return this.withClient(async (client) => {
+      await this.expireStaleSessions(client);
+      const session = await this.getSessionSummaryByToken(client, sessionToken);
+
+      if (!session) {
+        return {
+          success: false,
+          code: 'invalid_session',
+          message: 'Session was not found.',
+        };
+      }
+
+      if (session.status !== SESSION_STATUS.ACTIVE) {
+        return {
+          success: false,
+          code: 'session_not_active',
+          message: 'Only active sessions can upload recordings.',
+          session,
+        };
+      }
+
+      if (!hasRequiredSessionMetadata(session.metadata)) {
+        return {
+          success: false,
+          code: 'session_metadata_required',
+          message: 'Session details must be completed before uploading recordings.',
+        };
+      }
+
+      const taskResult = await client.query(
+        `
+          SELECT
+            id,
+            text,
+            COALESCE(metadata, '{}'::jsonb) AS metadata
+          FROM tasks
+          WHERE id = $1
+            AND topic_id = $2
+          LIMIT 1
+        `,
+        [taskId, session.topicId]
+      );
+
+      if (taskResult.rowCount === 0) {
+        return {
+          success: false,
+          code: 'invalid_task',
+          message: 'Task does not belong to this session.',
+        };
+      }
+
+      return {
+        success: true,
+        sessionId: session.id,
+        sessionToken: session.sessionToken,
+        topicId: session.topicId,
+        task: taskResult.rows[0],
+      };
+    });
+  }
+
+  async submitRecording(sessionToken, taskId, recordingDetails) {
+    return this.withClient(async (client) => {
+      await this.expireStaleSessions(client);
+      const session = await this.getSessionSummaryByToken(client, sessionToken);
+
+      if (!session) {
+        return {
+          success: false,
+          code: 'invalid_session',
+          message: 'Session was not found.',
+        };
+      }
+
+      if (session.status !== SESSION_STATUS.ACTIVE) {
+        return {
+          success: false,
+          code: 'session_not_active',
+          message: 'Only active sessions can upload recordings.',
+          session,
+        };
+      }
+
+      const taskResult = await client.query(
+        `
+          SELECT id
+          FROM tasks
+          WHERE id = $1
+            AND topic_id = $2
+          LIMIT 1
+        `,
+        [taskId, session.topicId]
+      );
+
+      if (taskResult.rowCount === 0) {
+        return {
+          success: false,
+          code: 'invalid_task',
+          message: 'Task does not belong to this session.',
+        };
+      }
+
+      try {
+        await client.query('BEGIN');
+        const insertResult = await client.query(
+          `
+            INSERT INTO recordings (
+              session_id,
+              task_id,
+              storage_type,
+              storage_key,
+              duration_sec,
+              submitted_at,
+              metadata
+            )
+            VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)
+            ON CONFLICT (session_id, task_id)
+            DO UPDATE SET
+              storage_type = EXCLUDED.storage_type,
+              storage_key = EXCLUDED.storage_key,
+              duration_sec = EXCLUDED.duration_sec,
+              submitted_at = EXCLUDED.submitted_at,
+              metadata = EXCLUDED.metadata
+            RETURNING id
+          `,
+          [
+            session.id,
+            taskId,
+            recordingDetails.storageType,
+            recordingDetails.storageKey,
+            recordingDetails.durationSec,
+            recordingDetails.submittedAt || new Date().toISOString(),
+            normalizeMetadata(recordingDetails.metadata),
+          ]
+        );
+
+        await this.touchSession(client, session.id);
+        const updatedSession = await this.getSessionSummaryByToken(client, sessionToken);
+
+        if (updatedSession.progress.remainingTasks === 0) {
+          await this.markSessionCompleted(client, session.id);
+        }
+
+        await client.query('COMMIT');
+        const finalSession = await this.getSessionSummaryByToken(client, sessionToken);
+
+        return {
+          success: true,
+          session: finalSession,
+          sessionStatus: finalSession.status,
+          progress: finalSession.progress,
+          recording: {
+            id: insertResult.rows[0]?.id,
+            storageKey: recordingDetails.storageKey,
+            durationSec: recordingDetails.durationSec,
+          },
+        };
+      } catch (error) {
+        await client.query('ROLLBACK').catch(() => {});
+        console.error('Error submitting recording:', error);
+        return {
+          success: false,
+          code: 'submit_recording_failed',
+          message: 'Could not save the recording.',
+        };
+      }
+    });
+  }
+
+  async exitSession(sessionToken) {
+    return this.withClient(async (client) => {
+      await this.expireStaleSessions(client);
+      const session = await this.getSessionSummaryByToken(client, sessionToken);
+
+      if (!session) {
+        return {
+          success: false,
+          code: 'invalid_session',
+          message: 'Session was not found.',
+        };
+      }
+
+      if (session.status === SESSION_STATUS.ABANDONED) {
+        return { success: true, session };
+      }
+
+      if (session.status === SESSION_STATUS.COMPLETED) {
+        return { success: true, session };
+      }
+
+      await client.query(
+        `
+          UPDATE participant_sessions
+          SET status = $2,
+              exited_at = COALESCE(exited_at, NOW()),
+              updated_at = NOW(),
+              last_activity_at = NOW()
+          WHERE session_token = $1
+        `,
+        [sessionToken, SESSION_STATUS.ABANDONED]
+      );
+
+      return {
+        success: true,
+        session: await this.getSessionSummaryByToken(client, sessionToken),
+      };
+    });
+  }
+
+  async completeSession(sessionToken) {
+    return this.withClient(async (client) => {
+      await this.expireStaleSessions(client);
+      const session = await this.getSessionSummaryByToken(client, sessionToken);
+
+      if (!session) {
+        return {
+          success: false,
+          code: 'invalid_session',
+          message: 'Session was not found.',
+        };
+      }
+
+      if (session.status === SESSION_STATUS.COMPLETED) {
+        return { success: true, session };
+      }
+
+      if (session.status === SESSION_STATUS.ABANDONED) {
+        return {
+          success: false,
+          code: 'session_abandoned',
+          message: 'An abandoned session cannot be completed.',
+          session,
+        };
+      }
+
+      if (session.progress.remainingTasks > 0) {
+        return {
+          success: false,
+          code: 'session_incomplete',
+          message: 'All prompts must be recorded before completing the session.',
+          session,
+        };
+      }
+
+      await this.markSessionCompleted(client, session.id);
+      return {
+        success: true,
+        session: await this.getSessionSummaryByToken(client, sessionToken),
+      };
+    });
   }
 }

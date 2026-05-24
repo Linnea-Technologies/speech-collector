@@ -1,35 +1,109 @@
-# Database Structure and Task Management Guide
+# Database Structure And Session Model
 
-## Core Database Schema
+The active AINA collector schema is built around anonymous participant sessions.
 
-The app's database schema is structured with three main tables:
-- **Users**: Contains user information and credentials together with subject metadata.
-- **Topics**: Represents topics that group related tasks.
-- **Tasks**: Stores individual tasks associated with topics. Each user can be assigned to one or more topics, creating a structure similar to a QA dataset.
+## Core Tables
 
-There are metadata fields in both users and tasks tables which has JSONB type where you can store metadata of users and tasks in json format.
+### `topics`
 
-## Dataset and Population Logic
+One seeded prompt-set copy for one volunteer session.
 
-### Sample Dataset
-The app uses the **Spoken-SQuAD** dataset as the base database schema. Custom scripts have been developed to facilitate the creation and population of the database with this dataset.
+Fields include:
 
-### TaskProvider System
-The `TaskProvider` class, located at `backend/src/taskProvider.js`, handles task management with two main methods:
-- `getTask()`: Retrieves tasks for users to work on.
-- `submitTask()`: Processes and stores task submissions.
+- `id`
+- `name`
+- `task_count`
+- `metadata`
 
-## Customizing Database Structure
+Each topic copy is seeded ahead of time by `pnpm run aina:seed`.
 
-To adapt the app to different database structures:
+### `tasks`
 
-1. Create your own `TaskProvider` implementation
-2. Implement the required methods:
-   - `getTask()`
-   - `submitTask()`
-3. Update your database schema accordingly
+Immutable prompts inside a topic copy.
 
-A default `TaskProvider` implementation for the [spoken-SQuAD](https://github.com/Chia-Hsuan-Lee/Spoken-SQuAD) dataset is included as an example.
+Fields include:
 
-## Return to Setup
-Return to the [main README](../README.md) to continue with the SpeechCollector setup.
+- `id`
+- `topic_id`
+- `task_idx`
+- `text`
+- `metadata`
+
+`metadata` stores prompt label/category/language information used during export.
+
+### `participant_sessions`
+
+Anonymous browser-backed volunteer sessions.
+
+Fields include:
+
+- `id`
+- `session_token`
+- `topic_id`
+- `status`
+- `metadata`
+- `created_at`
+- `updated_at`
+- `last_activity_at`
+- `completed_at`
+- `exited_at`
+
+Status values:
+
+- `active`
+- `completed`
+- `abandoned`
+
+### `recordings`
+
+One saved recording per `(session_id, task_id)`.
+
+Fields include:
+
+- `id`
+- `session_id`
+- `task_id`
+- `storage_type`
+- `storage_key`
+- `duration_sec`
+- `submitted_at`
+- `metadata`
+
+## Allocation Model
+
+- one topic copy is assigned to one session
+- one session token auto-resumes in the same browser while active
+- recordings determine progress
+- tasks themselves are not marked complete globally
+
+This avoids the old `users`-table coupling and makes partial sessions safe to keep.
+
+## Concurrency Model
+
+Session creation uses row locking with `FOR UPDATE SKIP LOCKED` so concurrent volunteers do not receive the same topic copy.
+
+Topic reuse is prevented by a unique index on `participant_sessions.topic_id`.
+
+`startSession()` also only selects topics with no `participant_sessions` row at all, so a topic copy is permanently consumed once it has been assigned. That means `completed` and `abandoned` sessions both continue to reserve their topic copy by design.
+
+For local/dev testing, you can either:
+
+- delete rows from `recordings` and `participant_sessions` to reuse the existing topic copies
+- increase `AINA_TOPIC_COPIES` and rerun `pnpm run aina:seed` to create more topic copies
+
+## Exit And Completion
+
+- `completed` means every task in the assigned topic has a recording
+- `abandoned` means the volunteer exited or the session expired after inactivity
+- both statuses keep already submitted recordings valid for export
+
+## Export Relationship
+
+Exporter joins:
+
+- `participant_sessions`
+- `recordings`
+- `tasks`
+- `topics`
+
+No export logic depends on a `users` table.

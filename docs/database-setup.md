@@ -1,6 +1,6 @@
 # Database Setup Guide
 
-This guide walks you through installing and setting up PostgreSQL for SpeechCollector.
+This guide walks you through installing and setting up PostgreSQL for the AINA Speech Collector.
 
 ## Installing PostgreSQL
 
@@ -21,7 +21,7 @@ createdb speechcollector
 psql speechcollector
 ```
 
-Once connected to the database, you can install extensions required to use the [Spoken-Squad](https://github.com/Chia-Hsuan-Lee/Spoken-SQuAD)schema, inspect the database content and exit.
+Once connected to the database, install the UUID extension used by the AINA schema, inspect the database content, and exit.
 ```sql
 CREATE EXTENSION "uuid-ossp";
 \l
@@ -53,4 +53,11 @@ CREATE EXTENSION "uuid-ossp";
 ```
 
 ## Next Steps
-Return to the [main README](../README.md#required-database-setup) to continue with the SpeechCollector setup.
+
+Return to the [main README](../README.md) and run:
+
+```bash
+pnpm run aina:seed
+```
+
+That creates the AINA tables and seeds the prompt-set topic copies for anonymous sessions.

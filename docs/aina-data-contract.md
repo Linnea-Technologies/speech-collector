@@ -1,0 +1,204 @@
+# AINA Speech Collector Data Contract v1
+
+## Purpose
+
+`schema_version = "v1"` is the first stable contract between the browser collector, backend storage, and the audio-classifier dataset loader. The collector stores live data safely as PostgreSQL rows plus audio files in local storage or S3-compatible storage. The final classifier handoff is produced later by `scripts/aina/exportDataset.js`.
+
+The frontend must not append directly to a shared `samples.jsonl` file. Public volunteers can upload at the same time, and concurrent appends to one shared manifest can corrupt data. Each upload is stored as one database recording row plus one audio object/file, then the exporter creates `metadata/dataset.json` and `metadata/samples.jsonl`.
+
+## Live Storage Model
+
+- PostgreSQL is the live source of truth for sessions, task assignments, session metadata, recording rows, durations, and storage keys.
+- Local storage or S3 stores audio files.
+- `recordings.metadata` stores recording-level v1 metadata without a DB schema change.
+- `participant_sessions.metadata` stores session-level v1 metadata without a DB schema change.
+- Backend safety limits are authoritative. The frontend timer improves UX, but the backend rejects files that are too large or too long.
+
+## Session Metadata
+
+Collected once near the start of a volunteer session and stored in `participant_sessions.metadata`.
+
+Required v1 shape:
+
+```json
+{
+  "schema_version": "v1",
+  "device_id": "anonymous-browser-uuid",
+  "consent_response": "yes",
+  "demographics": {
+    "age_group": "26-35",
+    "gender": "prefer_not_to_say",
+    "native_language": "fi",
+    "native_language_other": null,
+    "dialect_region": "pori",
+    "dialect_region_other": null
+  },
+  "environment": {
+    "noise_level": "moderate",
+    "audio_hardware": "not_sure"
+  },
+  "technical": {
+    "user_agent": "Mozilla/5.0 ...",
+    "inferred_os": "Windows",
+    "inferred_browser": "Chrome",
+    "inferred_device_type": "desktop"
+  }
+}
+```
+
+The volunteer does not type `device_id`, ISO language codes, browser user agent, OS, browser, or device type. `device_id` is an anonymous browser UUID stored in `localStorage` under `aina.speechCollector.deviceId`; it is not a real hardware ID or serial number.
+
+`native_language_other` is only shown and stored when `native_language` is `other`; otherwise it is `null`. `dialect_region_other` behaves the same way for `dialect_region = "other"`.
+
+## Recording Metadata
+
+Sent by the frontend as JSON-stringified multipart `metadata`, validated by the backend, completed with authoritative task data, and stored in `recordings.metadata`.
+
+Required v1 shape:
+
+```json
+{
+  "schema_version": "v1",
+  "timestamp": "2026-05-03T12:00:00.000Z",
+  "prompted_word": "Kyllä",
+  "normalized_label": "kylla",
+  "literal_transcript": null,
+  "label_source": "prompt_assumed",
+  "language": "fi",
+  "category": "affirmative",
+  "technical": {
+    "sample_rate_hz": 48000,
+    "channel_count": 1,
+    "media_stream_settings": {
+      "echoCancellation": true,
+      "noiseSuppression": true,
+      "autoGainControl": true
+    }
+  },
+  "processed_audio": {
+    "sample_rate_hz": 16000,
+    "channel_count": 1,
+    "encoding": "pcm_s16le"
+  }
+}
+```
+
+The backend derives `prompted_word`, `normalized_label`, `language`, and `category` from the task row. The frontend is not trusted for classifier labels.
+
+The `technical` object keeps browser/media-stream capture metadata. `processed_audio` describes the audio file after backend processing; saved recordings are WAV PCM 16-bit, 16 kHz, mono.
+
+`normalized_label` is the required canonical classifier training label. For compatibility with the current audio-classifier loader, labels remain ASCII, for example `kylla` and `eipa`. `prompted_word` stores the Finnish display text, for example `Kyllä`.
+
+`literal_transcript` is optional metadata for review/debugging. It is `null` when the volunteer leaves the transcript unchanged or empty. It is a trimmed string when the volunteer edits the "What did you actually say?" field.
+
+Allowed `label_source` values:
+
+- `prompt_assumed`: the prompt label is assumed correct.
+- `user_confirmed`: the volunteer supplied a different literal transcript.
+- `reviewed`: reserved for a later manual review workflow.
+
+The classifier should train on `normalized_label`, not `literal_transcript`.
+
+## Safety And Turnstile
+
+Relevant environment variables:
+
+```env
+VITE_MAX_RECORDING_SECONDS=5
+MAX_RECORDING_SECONDS=5
+MAX_UPLOAD_BYTES=2000000
+MAX_RECORDING_DURATION_TOLERANCE_SECONDS=1
+VITE_TURNSTILE_SITE_KEY=
+TURNSTILE_SECRET_KEY=
+```
+
+The frontend auto-stops recordings after `VITE_MAX_RECORDING_SECONDS`, defaulting to 5 seconds. The backend rejects uploads larger than `MAX_UPLOAD_BYTES` and rejects audio longer than `MAX_RECORDING_SECONDS + MAX_RECORDING_DURATION_TOLERANCE_SECONDS`.
+
+Turnstile is a session-start gate only. When `TURNSTILE_SECRET_KEY` is configured, `/api/start-session` requires and verifies a Turnstile token before creating or resuming a session. When the secret is empty, local development bypasses Turnstile.
+
+## Export Output
+
+`scripts/aina/exportDataset.js` writes:
+
+```text
+exports/short-finnish-responses/v1/
+  metadata/
+    dataset.json
+    samples.jsonl
+```
+
+Each sample row combines:
+
+- `recordings` row values, including `recordings.id` as `sample_id`
+- `recordings.metadata`
+- `participant_sessions.metadata`
+- task metadata
+- storage information
+
+Example exported row:
+
+```json
+{
+  "sample_id": "recording-uuid",
+  "audio_path": "session-uuid/task-id.wav",
+  "prompted_word": "Kyllä",
+  "normalized_label": "kylla",
+  "label": "kylla",
+  "transcript": "Kyllä",
+  "literal_transcript": null,
+  "label_source": "prompt_assumed",
+  "language": "fi",
+  "duration_sec": 0.82,
+  "split": null,
+  "source": "real",
+  "speaker_id": "spk_ab12cd34ef56",
+  "metadata": {
+    "schema_version": "v1",
+    "device_id": "dev_ab12cd34ef56",
+    "demographics": {
+      "age_group": "26-35",
+      "gender": "prefer_not_to_say",
+      "native_language": "fi",
+      "native_language_other": null,
+      "dialect_region": "pori",
+      "dialect_region_other": null
+    },
+    "environment": {
+      "noise_level": "moderate",
+      "audio_hardware": "not_sure"
+    },
+    "technical": {
+      "user_agent": "Mozilla/5.0 ...",
+      "inferred_os": "Windows",
+      "inferred_browser": "Chrome",
+      "inferred_device_type": "desktop",
+      "sample_rate_hz": 48000,
+      "channel_count": 1
+    },
+    "processed_audio": {
+      "sample_rate_hz": 16000,
+      "channel_count": 1,
+      "encoding": "pcm_s16le"
+    },
+    "collection": {
+      "topic_id": "short_finnish_responses_v1_0001",
+      "task_id": "short_finnish_responses_v1_0001_kylla",
+      "session_id": "session-uuid",
+      "session_status": "completed",
+      "submitted_at": "2026-05-03T12:00:00.000Z",
+      "storage_type": "local",
+      "category": "affirmative"
+    }
+  }
+}
+```
+
+`label` remains an alias of `normalized_label` for the current audio-classifier loader. `speaker_id` is stable for the same browser `device_id` and is hashed with `DATASET_SPEAKER_HASH_SALT` during export.
+
+## Classifier Handoff Notes
+
+- Train on `normalized_label` or its compatibility alias `label`.
+- Use `prompted_word`/`transcript` for display and review.
+- Treat `literal_transcript` as optional metadata, not the default target label.
+- `sample_id` is the UUID from `recordings.id`.
+- Export filters recordings by the active `STORAGE` setting so one manifest does not mix local and S3 audio roots.
