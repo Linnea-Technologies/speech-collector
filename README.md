@@ -25,7 +25,9 @@ volunteer browser
      - AWS S3 in production-like mode
   -> exportDataset.js
   -> metadata/dataset.json + metadata/samples.jsonl
-  -> audio-classifier loader
+  -> exportDatabuilderDataset.js
+  -> databuilder/manifest.json + databuilder/<sample_id>.wav + databuilder/<sample_id>.json
+  -> audio-classifier databuilder
 ```
 
 ## What Changed In This Fork
@@ -97,6 +99,9 @@ DATASET_TASK=short_response_classification
 DATASET_OUTPUT_DIR=./exports/short-finnish-responses/v1
 DATASET_AUDIO_ROOT=
 DATASET_SPEAKER_HASH_SALT=change-me-before-real-export
+
+DATABUILDER_OUTPUT_DIR=./exports/short-finnish-responses/v1/databuilder
+DATABUILDER_MANIFEST_VERSION=20260501001
 ```
 
 Notes:
@@ -107,6 +112,8 @@ Notes:
 - In S3 mode it is used only as a temporary processing area.
 - `COLLECTION_AUDIO_PREFIX` defines the permanent object-key prefix in S3.
 - `DATASET_AUDIO_ROOT` is optional. If empty, export derives the correct storage root from local mode or AWS S3 settings.
+- `DATABUILDER_OUTPUT_DIR` is the optional output directory for the audio-classifier databuilder compatibility package.
+- `DATABUILDER_MANIFEST_VERSION` controls the flat databuilder `manifest.json` version field.
 - `VITE_MAX_RECORDING_SECONDS` controls the frontend auto-stop timer. `MAX_RECORDING_SECONDS` plus `MAX_RECORDING_DURATION_TOLERANCE_SECONDS` is the backend duration limit.
 - `MAX_UPLOAD_BYTES` limits multipart audio upload size before storage.
 - Leave `VITE_TURNSTILE_SITE_KEY` and `TURNSTILE_SECRET_KEY` empty for local development. Configure both for public collection.
@@ -271,7 +278,7 @@ This keeps `dataset.json.audio_root` and every sample `audio_path` loader-compat
 
 ## Export Dataset
 
-After recordings exist, export manifests with:
+After recordings exist, export the normal collector dataset manifests with:
 
 ```bash
 pnpm run aina:export
@@ -298,7 +305,42 @@ Export behavior:
 - hashes the anonymous browser `device_id` into stable `speaker_id`
 - references permanent storage directly
 
+This export remains the collector-native contract. It does not copy audio into the export folder.
+
+## Export Databuilder Package
+
+The current `audio-classifier` `feature/databuilder` branch expects a flat cache package, so the collector also provides a compatibility bridge:
+
+```bash
+pnpm run aina:export:databuilder
+```
+
+Default output:
+
+```text
+exports/short-finnish-responses/v1/databuilder/
+  manifest.json
+  <sample_id>.wav
+  <sample_id>.json
+```
+
+Databuilder export behavior:
+
+- keeps `pnpm run aina:export` unchanged
+- filters rows to the active `STORAGE` backend, like the normal exporter
+- exports only classifier-ready recordings with `processed_audio` set to WAV PCM 16-bit, 16 kHz, mono
+- skips legacy recordings where `processed_audio` is missing, null, or different from the classifier-ready format
+- fails clearly when no classifier-ready recordings remain
+- uses `recordings.id` as `sample_id`, the file basename, and the manifest key
+- copies local audio or downloads S3 audio into `<sample_id>.wav`
+- writes root-level sidecar JSON because databuilder filters use paths such as `demographics.native_language`
+- writes MD5 hashes for the exact WAV and JSON bytes in `manifest.json`
+
+Generated exports and audio files are ignored by Git and should not be committed.
+
 ## Validate Against audio-classifier
+
+For the databuilder package, see [docs/databuilder-export.md](docs/databuilder-export.md).
 
 ```bash
 cd D:\ass_vscode\AIN\packages\audio-classifier
@@ -338,6 +380,7 @@ If you only need more test sessions and want to keep the existing prompt copies,
 - [docs/aina-refactor-plan.md](docs/aina-refactor-plan.md)
 - [docs/aina-s3-integration.md](docs/aina-s3-integration.md)
 - [docs/aina-data-contract.md](docs/aina-data-contract.md)
+- [docs/databuilder-export.md](docs/databuilder-export.md)
 - [docs/database-structure.md](docs/database-structure.md)
 - [docs/database-setup.md](docs/database-setup.md)
 - [docs/dev-reset-session-data.sql](docs/dev-reset-session-data.sql)

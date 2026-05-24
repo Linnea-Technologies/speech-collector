@@ -2,9 +2,9 @@
 
 ## Purpose
 
-`schema_version = "v1"` is the first stable contract between the browser collector, backend storage, and the audio-classifier dataset loader. The collector stores live data safely as PostgreSQL rows plus audio files in local storage or S3-compatible storage. The final classifier handoff is produced later by `scripts/aina/exportDataset.js`.
+`schema_version = "v1"` is the first stable contract between the browser collector, backend storage, and downstream dataset tooling. The collector stores live data safely as PostgreSQL rows plus audio files in local storage or S3-compatible storage. The normal collector export is produced by `scripts/aina/exportDataset.js`. The current audio-classifier databuilder receives a separate compatibility bridge from `scripts/aina/exportDatabuilderDataset.js`.
 
-The frontend must not append directly to a shared `samples.jsonl` file. Public volunteers can upload at the same time, and concurrent appends to one shared manifest can corrupt data. Each upload is stored as one database recording row plus one audio object/file, then the exporter creates `metadata/dataset.json` and `metadata/samples.jsonl`.
+The frontend must not append directly to a shared `samples.jsonl` file. Public volunteers can upload at the same time, and concurrent appends to one shared manifest can corrupt data. Each upload is stored as one database recording row plus one audio object/file, then exporters create derived handoff files.
 
 ## Live Storage Model
 
@@ -116,7 +116,7 @@ The frontend auto-stops recordings after `VITE_MAX_RECORDING_SECONDS`, defaultin
 
 Turnstile is a session-start gate only. When `TURNSTILE_SECRET_KEY` is configured, `/api/start-session` requires and verifies a Turnstile token before creating or resuming a session. When the secret is empty, local development bypasses Turnstile.
 
-## Export Output
+## Collector Export Output
 
 `scripts/aina/exportDataset.js` writes:
 
@@ -195,6 +195,96 @@ Example exported row:
 
 `label` remains an alias of `normalized_label` for the current audio-classifier loader. `speaker_id` is stable for the same browser `device_id` and is hashed with `DATASET_SPEAKER_HASH_SALT` during export.
 
+## Databuilder Compatibility Export
+
+`scripts/aina/exportDatabuilderDataset.js` is an additional bridge for the current `audio-classifier` `feature/databuilder` package layout. It does not replace the collector export above.
+
+It writes:
+
+```text
+exports/short-finnish-responses/v1/databuilder/
+  manifest.json
+  <sample_id>.wav
+  <sample_id>.json
+```
+
+The output directory and manifest version can be configured with:
+
+```env
+DATABUILDER_OUTPUT_DIR=./exports/short-finnish-responses/v1/databuilder
+DATABUILDER_MANIFEST_VERSION=20260501001
+```
+
+`sample_id` is always `recordings.id`, and the same value is used as:
+
+- the manifest key
+- the WAV basename
+- the sidecar JSON basename
+- the sidecar `sample_id` field
+
+The manifest format is:
+
+```json
+{
+  "version": "20260501001",
+  "hash_algorithm": "md5",
+  "samples": {
+    "recording-uuid": {
+      "wav_hash": "md5-of-written-wav",
+      "json_hash": "md5-of-written-json"
+    }
+  }
+}
+```
+
+The MD5 hashes are computed from the exact files written into the databuilder output directory.
+
+Each `<sample_id>.json` sidecar is root-level for fields used by classifier filters:
+
+```json
+{
+  "sample_id": "recording-uuid",
+  "timestamp": "2026-05-03T12:00:00.000Z",
+  "prompted_word": "Kyll??",
+  "normalized_label": "kylla",
+  "literal_transcript": null,
+  "label_source": "prompt_assumed",
+  "language": "fi",
+  "category": "affirmative",
+  "augmentation_strategy": null,
+  "augmentations": [],
+  "device_id": "dev_ab12cd34ef56",
+  "speaker_id": "spk_ab12cd34ef56",
+  "duration_sec": 0.82,
+  "demographics": {},
+  "environment": {},
+  "technical": {},
+  "processed_audio": {
+    "sample_rate_hz": 16000,
+    "channel_count": 1,
+    "encoding": "pcm_s16le"
+  },
+  "collection": {},
+  "storage": {}
+}
+```
+
+The sidecar keeps `demographics`, `environment`, `technical`, `processed_audio`, and `category` at the root because audio-classifier filters use dotted paths such as `demographics.native_language` and `technical.sample_rate_hz`, not `metadata.demographics.native_language`.
+
+In local storage mode, the bridge copies the stored audio file to `<sample_id>.wav`. In S3 mode, it downloads the stored object and writes it as `<sample_id>.wav`. Live collection still uses PostgreSQL plus local/S3 audio storage; the databuilder package is a generated handoff artifact and should not be committed.
+
+The databuilder export is strict by default. It exports only classifier-ready recordings whose `recording.metadata.processed_audio` is exactly:
+
+```json
+{
+  "sample_rate_hz": 16000,
+  "channel_count": 1,
+  "encoding": "pcm_s16le"
+}
+```
+
+Old recordings collected before the processed-audio fix may not contain `processed_audio` or may point to 48 kHz audio. Those recordings are skipped by the databuilder bridge so they cannot enter the classifier cache by accident. If no classifier-ready recordings remain, the databuilder export fails and asks for fresh samples or explicit legacy reprocessing.
+
 ## Classifier Handoff Notes
 
 - Train on `normalized_label` or its compatibility alias `label`.
@@ -202,3 +292,5 @@ Example exported row:
 - Treat `literal_transcript` as optional metadata, not the default target label.
 - `sample_id` is the UUID from `recordings.id`.
 - Export filters recordings by the active `STORAGE` setting so one manifest does not mix local and S3 audio roots.
+- Use `scripts/aina/exportDataset.js` for the collector-native `dataset.json + samples.jsonl` export.
+- Use `scripts/aina/exportDatabuilderDataset.js` when the current audio-classifier databuilder needs `manifest.json + <sample_id>.wav + <sample_id>.json`.

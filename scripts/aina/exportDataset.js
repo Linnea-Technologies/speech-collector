@@ -21,7 +21,7 @@ export function getActiveStorageType() {
   return configValue('STORAGE', 'local');
 }
 
-function createDbClient() {
+export function createDbClient() {
   config();
   const password = encodeURIComponent(process.env.PG_PASSWORD || '');
   const connString = `postgresql://${process.env.PG_USER}:${password}@${process.env.PG_HOST}:${process.env.PG_PORT}/${process.env.PG_DATABASE}`;
@@ -190,7 +190,7 @@ export function buildSample(row, index, dataset) {
   };
 }
 
-async function expireStaleSessions(client) {
+export async function expireStaleSessions(client) {
   await client.query(
     `
       UPDATE participant_sessions
@@ -204,7 +204,7 @@ async function expireStaleSessions(client) {
   );
 }
 
-async function fetchLabelVocabulary(client) {
+export async function fetchLabelVocabulary(client) {
   const result = await client.query(`
     SELECT DISTINCT metadata->>'label' AS label
     FROM tasks
@@ -215,7 +215,7 @@ async function fetchLabelVocabulary(client) {
   return result.rows.map((row) => row.label).filter(Boolean);
 }
 
-async function fetchCompletedRows(client) {
+export async function fetchCompletedRows(client) {
   const result = await client.query(`
     SELECT
       r.id AS recording_id,

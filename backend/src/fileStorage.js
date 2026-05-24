@@ -1,6 +1,7 @@
 import fs from 'fs';
 import path from 'path';
-import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3';
+import { pipeline } from 'stream/promises';
+import { S3Client, PutObjectCommand, GetObjectCommand } from '@aws-sdk/client-s3';
 import ffmpeg from 'fluent-ffmpeg';
 import ffmpegPath from 'ffmpeg-static';
 import ffprobe from 'ffprobe-static';
@@ -173,6 +174,32 @@ export class FileStorage {
     );
 
     return response;
+  }
+
+  async downloadObject(objectKey, destinationPath, options = {}) {
+    if (!this.s3Client) {
+      throw new Error('Remote download is only available for S3-compatible storage.');
+    }
+
+    const bucketName = options.bucketName || this.bucketName;
+    if (!bucketName) {
+      throw new Error('Bucket name is required to download a storage object.');
+    }
+
+    ensureDirectory(path.dirname(destinationPath));
+    const response = await this.s3Client.send(
+      new GetObjectCommand({
+        Bucket: bucketName,
+        Key: objectKey,
+      })
+    );
+
+    if (!response.Body) {
+      throw new Error(`Storage object ${objectKey} did not include a response body.`);
+    }
+
+    await pipeline(response.Body, fs.createWriteStream(destinationPath));
+    return destinationPath;
   }
 
   async saveRecording(file, { sessionId, taskId }) {
