@@ -127,11 +127,12 @@ export function getConsentDeclineMessage(metadata: Record<string, unknown> | nul
 export function buildV1SessionMetadata(values: FormValues) {
   const nativeLanguage = normalizeMetadataValue(values.native_language);
   const dialectRegion = normalizeMetadataValue(values.dialect_region);
+  const consentResponse = normalizeMetadataValue(values.consent_response);
 
   return {
     schema_version: 'v1',
-    device_id: getOrCreateDeviceId(),
-    consent_response: normalizeMetadataValue(values.consent_response),
+    device_id: consentResponse === 'yes' ? getOrCreateDeviceId() : null,
+    consent_response: consentResponse,
     demographics: {
       age_group: normalizeMetadataValue(values.age_group),
       gender: normalizeMetadataValue(values.gender),

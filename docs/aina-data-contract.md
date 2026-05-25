@@ -1,8 +1,8 @@
-# AINA Speech Collector Data Contract v1
+# AINA Speech Collector Data Contract
 
 ## Purpose
 
-`schema_version = "v1"` is the first stable contract between the browser collector, backend storage, and downstream dataset tooling. The collector stores live data safely as PostgreSQL rows plus audio files in local storage or S3-compatible storage. The normal collector export is produced by `scripts/aina/exportDataset.js`. The current audio-classifier databuilder receives a separate compatibility bridge from `scripts/aina/exportDatabuilderDataset.js`.
+`schema_version = "v1"` remains the stable session/recording metadata shape. The active AINA prompt bank is `short_finnish_responses` `v2`, which adds category UI metadata, `phrase_id`, and nullable `semantic_label` while keeping `normalized_label` as the phrase-level classifier target. The collector stores live data safely as PostgreSQL rows plus audio files in local storage or S3-compatible storage. The normal collector export is produced by `scripts/aina/exportDataset.js`. The current audio-classifier databuilder receives a separate compatibility bridge from `scripts/aina/exportDatabuilderDataset.js`.
 
 The frontend must not append directly to a shared `samples.jsonl` file. Public volunteers can upload at the same time, and concurrent appends to one shared manifest can corrupt data. Each upload is stored as one database recording row plus one audio object/file, then exporters create derived handoff files.
 
@@ -12,6 +12,7 @@ The frontend must not append directly to a shared `samples.jsonl` file. Public v
 - Local storage or S3 stores audio files.
 - `recordings.metadata` stores recording-level v1 metadata without a DB schema change.
 - `participant_sessions.metadata` stores session-level v1 metadata without a DB schema change.
+- Each upload inserts a new `recordings` row. Repeat recordings for the same `(session_id, task_id)` are separate samples.
 - Backend safety limits are authoritative. The frontend timer improves UX, but the backend rejects files that are too large or too long.
 
 ## Session Metadata
@@ -46,7 +47,7 @@ Required v1 shape:
 }
 ```
 
-The volunteer does not type `device_id`, ISO language codes, browser user agent, OS, browser, or device type. `device_id` is an anonymous browser UUID stored in `localStorage` under `aina.speechCollector.deviceId`; it is not a real hardware ID or serial number.
+The volunteer does not type `device_id`, ISO language codes, browser user agent, OS, browser, or device type. `device_id` is an anonymous browser UUID stored in `localStorage` under `aina.speechCollector.deviceId` after consent is accepted; it is not a real hardware ID or serial number. It is used to resume an active session and show which phrases this browser has already recorded.
 
 `native_language_other` is only shown and stored when `native_language` is `other`; otherwise it is `null`. `dialect_region_other` behaves the same way for `dialect_region = "other"`.
 
@@ -60,12 +61,14 @@ Required v1 shape:
 {
   "schema_version": "v1",
   "timestamp": "2026-05-03T12:00:00.000Z",
+  "phrase_id": "yes_kylla",
+  "semantic_label": "yes",
   "prompted_word": "Kyllä",
   "normalized_label": "kylla",
   "literal_transcript": null,
   "label_source": "prompt_assumed",
   "language": "fi",
-  "category": "affirmative",
+  "category": "yes",
   "technical": {
     "sample_rate_hz": 48000,
     "channel_count": 1,
@@ -83,11 +86,11 @@ Required v1 shape:
 }
 ```
 
-The backend derives `prompted_word`, `normalized_label`, `language`, and `category` from the task row. The frontend is not trusted for classifier labels.
+The backend derives `phrase_id`, `semantic_label`, `prompted_word`, `normalized_label`, `language`, and `category` from the task row. The frontend is not trusted for classifier labels or category metadata.
 
 The `technical` object keeps browser/media-stream capture metadata. `processed_audio` describes the audio file after backend processing; saved recordings are WAV PCM 16-bit, 16 kHz, mono.
 
-`normalized_label` is the required canonical classifier training label. For compatibility with the current audio-classifier loader, labels remain ASCII, for example `kylla` and `eipa`. `prompted_word` stores the Finnish display text, for example `Kyllä`.
+`normalized_label` is the required canonical classifier training label. For compatibility with the current audio-classifier loader, labels remain ASCII, for example `kylla`, `ei_oo`, and `kaks`. `semantic_label` is broader metadata for future targets, for example `yes`, `no`, or `number_2`. `prompted_word` stores the Finnish display text, for example `Kyllä`.
 
 `literal_transcript` is optional metadata for review/debugging. It is `null` when the volunteer leaves the transcript unchanged or empty. It is a trimmed string when the volunteer edits the "What did you actually say?" field.
 
@@ -98,6 +101,23 @@ Allowed `label_source` values:
 - `reviewed`: reserved for a later manual review workflow.
 
 The classifier should train on `normalized_label`, not `literal_transcript`.
+
+## Category Progress Metadata
+
+The category UI backend stores session-specific phrase order in `participant_sessions.metadata.ui.category_phrase_v1`:
+
+```json
+{
+  "category_order": ["yes", "no", "maybe", "dont_know", "correct", "number"],
+  "phrase_order_by_category": {
+    "yes": ["yes_kyl", "yes_joo", "yes_kylla"]
+  },
+  "created_at": "2026-05-25T00:00:00.000Z",
+  "updated_at": "2026-05-25T00:00:00.000Z"
+}
+```
+
+Progress counts unique `phrase_id` values. Repeat recordings are exported as additional samples but do not increase unique phrase progress twice. Previous recordings from the same anonymous browser `device_id` count toward category unlocks.
 
 ## Safety And Turnstile
 
@@ -121,7 +141,7 @@ Turnstile is a session-start gate only. When `TURNSTILE_SECRET_KEY` is configure
 `scripts/aina/exportDataset.js` writes:
 
 ```text
-exports/short-finnish-responses/v1/
+exports/short-finnish-responses/v2/
   metadata/
     dataset.json
     samples.jsonl
@@ -140,8 +160,10 @@ Example exported row:
 ```json
 {
   "sample_id": "recording-uuid",
-  "audio_path": "session-uuid/task-id.wav",
+  "audio_path": "session-uuid/task-id/recording-uuid.wav",
   "prompted_word": "Kyllä",
+  "phrase_id": "yes_kylla",
+  "semantic_label": "yes",
   "normalized_label": "kylla",
   "label": "kylla",
   "transcript": "Kyllä",
@@ -181,13 +203,15 @@ Example exported row:
       "encoding": "pcm_s16le"
     },
     "collection": {
-      "topic_id": "short_finnish_responses_v1_0001",
-      "task_id": "short_finnish_responses_v1_0001_kylla",
+      "topic_id": "short_finnish_responses_v2_0001",
+      "task_id": "short_finnish_responses_v2_0001_yes_kylla",
       "session_id": "session-uuid",
       "session_status": "completed",
       "submitted_at": "2026-05-03T12:00:00.000Z",
       "storage_type": "local",
-      "category": "affirmative"
+      "category": "yes",
+      "phrase_id": "yes_kylla",
+      "semantic_label": "yes"
     }
   }
 }
@@ -202,7 +226,7 @@ Example exported row:
 It writes:
 
 ```text
-exports/short-finnish-responses/v1/databuilder/
+exports/short-finnish-responses/v2/databuilder/
   manifest.json
   <sample_id>.wav
   <sample_id>.json
@@ -211,7 +235,7 @@ exports/short-finnish-responses/v1/databuilder/
 The output directory and manifest version can be configured with:
 
 ```env
-DATABUILDER_OUTPUT_DIR=./exports/short-finnish-responses/v1/databuilder
+DATABUILDER_OUTPUT_DIR=./exports/short-finnish-responses/v2/databuilder
 DATABUILDER_MANIFEST_VERSION=20260501001
 ```
 
@@ -245,12 +269,14 @@ Each `<sample_id>.json` sidecar is root-level for fields used by classifier filt
 {
   "sample_id": "recording-uuid",
   "timestamp": "2026-05-03T12:00:00.000Z",
-  "prompted_word": "Kyll??",
+  "prompted_word": "Kyllä",
+  "phrase_id": "yes_kylla",
+  "semantic_label": "yes",
   "normalized_label": "kylla",
   "literal_transcript": null,
   "label_source": "prompt_assumed",
   "language": "fi",
-  "category": "affirmative",
+  "category": "yes",
   "augmentation_strategy": null,
   "augmentations": [],
   "device_id": "dev_ab12cd34ef56",

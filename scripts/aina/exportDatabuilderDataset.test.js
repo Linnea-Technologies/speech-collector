@@ -86,6 +86,8 @@ function makeRow(overrides = {}) {
     recording_metadata: {
       schema_version: 'v1',
       prompted_word: 'Kylla',
+      phrase_id: 'yes_kylla',
+      semantic_label: 'yes',
       normalized_label: 'kylla',
       literal_transcript: 'kyl',
       label_source: 'user_confirmed',
@@ -124,6 +126,8 @@ test('buildDatabuilderSidecar creates root-level databuilder fields', () => {
   assert.equal(sidecar.sample_id, '11111111-1111-4111-8111-111111111111');
   assert.equal(sidecar.timestamp, '2026-04-22T10:00:00.000Z');
   assert.equal(sidecar.prompted_word, 'Kylla');
+  assert.equal(sidecar.phrase_id, 'yes_kylla');
+  assert.equal(sidecar.semantic_label, 'yes');
   assert.equal(sidecar.normalized_label, 'kylla');
   assert.equal(sidecar.literal_transcript, 'kyl');
   assert.equal(sidecar.label_source, 'user_confirmed');
@@ -143,6 +147,8 @@ test('buildDatabuilderSidecar creates root-level databuilder fields', () => {
     encoding: 'pcm_s16le',
   });
   assert.equal(sidecar.collection.session_id, 'session-123');
+  assert.equal(sidecar.collection.phrase_id, 'yes_kylla');
+  assert.equal(sidecar.collection.semantic_label, 'yes');
   assert.equal(sidecar.storage.storage_key, 'session-123/short_finnish_responses_v1_0001_kylla.wav');
   assert.equal(Object.hasOwn(sidecar, 'metadata'), false);
 });
@@ -172,6 +178,10 @@ test('required sidecar keys always exist for original recordings', () => {
   assert.equal(Object.hasOwn(sidecar, 'storage'), true);
   assert.equal(Object.hasOwn(sidecar, 'speaker_id'), true);
   assert.equal(Object.hasOwn(sidecar, 'device_id'), true);
+  assert.equal(Object.hasOwn(sidecar, 'phrase_id'), true);
+  assert.equal(Object.hasOwn(sidecar, 'semantic_label'), true);
+  assert.equal(sidecar.phrase_id, null);
+  assert.equal(sidecar.semantic_label, null);
 });
 
 test('exportDatabuilderRows copies local audio as sample_id.wav', async () => {

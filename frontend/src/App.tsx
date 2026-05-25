@@ -5,14 +5,18 @@ import InfoForm from "../components/InfoForm";
 import SessionIntro from "../components/SessionIntro";
 import SessionEndScreen from "../components/SessionEndScreen";
 import SoundRecorder from "../components/SoundRecorder";
-import TextContainer from "../components/TextContainer";
 import TurnstileGate from "../components/TurnstileGate";
 import {
   getConsentDeclineMessage,
   hasDeclinedConsent,
   isMetadataComplete,
 } from "../utils/sessionMetadata";
-import type { SessionState, SessionTask } from "../types/session";
+import type {
+  CategoryPhraseState,
+  CategoryStateCategory,
+  CategoryStateResponse,
+  SessionState,
+} from "../types/session";
 
 import "bootstrap/dist/css/bootstrap.min.css";
 import "./App.css";
@@ -22,7 +26,8 @@ type Phase =
   | "verification"
   | "intro"
   | "metadata"
-  | "task"
+  | "categoryIntro"
+  | "categoryRecording"
   | "completed"
   | "abandoned"
   | "declined"
@@ -30,18 +35,164 @@ type Phase =
   | "error";
 
 type MetadataMode = "required" | "edit";
+type CategoryStateApiResponse = CategoryStateResponse & {
+  code?: string;
+  message?: string;
+};
+
+const CATEGORY_HELPER_TEXT: Record<string, string> = {
+  yes: "Choose natural Finnish ways to answer yes. Recording more than the minimum helps balance the dataset.",
+  no: "Record short negative answers. You can repeat a phrase if you want to contribute another sample.",
+  maybe: "Record phrases that mean maybe or possibly.",
+  dont_know: "Record short not-sure answers, including local or informal forms when they feel natural.",
+  correct: "Record short confirmation phrases.",
+  number: "Record number words in a clear, natural voice.",
+};
 
 function getVolunteerAppTitle(value: unknown) {
   const title = typeof value === "string" ? value.replace(/\bAINA\s*/gi, "").trim() : "";
   return title || "Speech Collector";
 }
 
+function getCategoryHelpText(category: CategoryStateCategory | null) {
+  if (!category) {
+    return "";
+  }
+
+  return CATEGORY_HELPER_TEXT[category.id] || "Record several different phrases in this category.";
+}
+
+function getCategoryById(
+  state: CategoryStateResponse | null,
+  categoryId: string | null | undefined
+) {
+  if (!state || !categoryId) {
+    return null;
+  }
+
+  return state.categories.find((category) => category.id === categoryId) || null;
+}
+
+function getCategoryIndex(state: CategoryStateResponse | null, categoryId: string | null | undefined) {
+  if (!state || !categoryId) {
+    return -1;
+  }
+
+  return state.categories.findIndex((category) => category.id === categoryId);
+}
+
+function getInitialCategoryId(
+  state: CategoryStateResponse,
+  preferredCategoryId: string | null | undefined
+) {
+  const preferredCategory = getCategoryById(state, preferredCategoryId);
+  if (preferredCategory?.unlocked) {
+    return preferredCategory.id;
+  }
+
+  const backendActiveCategory = getCategoryById(state, state.activeCategoryId);
+  if (backendActiveCategory?.unlocked) {
+    return backendActiveCategory.id;
+  }
+
+  return state.categories.find((category) => category.unlocked)?.id || state.categories[0]?.id || null;
+}
+
+function phraseHasBackendRecordedState(phrase: CategoryPhraseState) {
+  return phrase.recordedInCurrentSession || phrase.recordedPreviouslyOnDevice;
+}
+
+function getInitialPhraseId(
+  category: CategoryStateCategory | null,
+  preferredPhraseId: string | null | undefined
+) {
+  if (!category) {
+    return null;
+  }
+
+  if (preferredPhraseId && category.phrases.some((phrase) => phrase.phraseId === preferredPhraseId)) {
+    return preferredPhraseId;
+  }
+
+  return (
+    category.phrases.find((phrase) => !phraseHasBackendRecordedState(phrase))?.phraseId ||
+    category.phrases[0]?.phraseId ||
+    null
+  );
+}
+
+function getNextCategory(state: CategoryStateResponse | null, categoryId: string | null | undefined) {
+  const index = getCategoryIndex(state, categoryId);
+  return index >= 0 ? state?.categories[index + 1] || null : null;
+}
+
+function getPreviousCategory(
+  state: CategoryStateResponse | null,
+  categoryId: string | null | undefined
+) {
+  const index = getCategoryIndex(state, categoryId);
+  return index > 0 ? state?.categories[index - 1] || null : null;
+}
+
+function isCategoryEligibleForNext(category: CategoryStateCategory | null) {
+  if (!category) {
+    return false;
+  }
+
+  return (
+    category.complete ||
+    category.requiredCount === 0 ||
+    category.progress.uniqueRecordedCount >= category.requiredCount
+  );
+}
+
+function getProgressPercent(category: CategoryStateCategory) {
+  if (!category.progress.totalPhrases) {
+    return 0;
+  }
+
+  return Math.min(
+    (category.progress.uniqueRecordedCount / category.progress.totalPhrases) * 100,
+    100
+  );
+}
+
+function getRequirementText(category: CategoryStateCategory) {
+  if (category.requiredCount <= 1) {
+    return "1 phrase required to continue";
+  }
+
+  return `${category.requiredCount} different phrases required to continue`;
+}
+
+function getPhraseStatusLabel(phrase: CategoryPhraseState) {
+  if (phrase.recordedInCurrentSession) {
+    return "Recorded this session";
+  }
+
+  if (phrase.recordedPreviouslyOnDevice) {
+    return "Recorded before on this browser/device";
+  }
+
+  return "Not recorded yet";
+}
+
+function getPhraseStatusClassName(phrase: CategoryPhraseState) {
+  if (phrase.recordedInCurrentSession) {
+    return "category-phrase-card__status category-phrase-card__status--current";
+  }
+
+  if (phrase.recordedPreviouslyOnDevice) {
+    return "category-phrase-card__status category-phrase-card__status--previous";
+  }
+
+  return "category-phrase-card__status";
+}
+
 function App() {
   const {
     sessionToken,
     participantMetadata,
-    currentTask,
-    progress,
     applySession,
     clearSession,
     setCurrentTask,
@@ -51,7 +202,10 @@ function App() {
   const [phase, setPhase] = useState<Phase>("bootstrapping");
   const [metadataMode, setMetadataMode] = useState<MetadataMode>("required");
   const [message, setMessage] = useState<string>("");
-  const [taskLoading, setTaskLoading] = useState<boolean>(false);
+  const [categoryState, setCategoryState] = useState<CategoryStateResponse | null>(null);
+  const [selectedCategoryId, setSelectedCategoryId] = useState<string | null>(null);
+  const [selectedPhraseId, setSelectedPhraseId] = useState<string | null>(null);
+  const [categoryLoading, setCategoryLoading] = useState<boolean>(false);
   const [turnstileToken, setTurnstileToken] = useState<string | null>(null);
   const hasBootstrapped = useRef(false);
 
@@ -64,12 +218,47 @@ function App() {
     [participantMetadata]
   );
 
+  const selectedCategory = useMemo(
+    () => getCategoryById(categoryState, selectedCategoryId),
+    [categoryState, selectedCategoryId]
+  );
+
+  const selectedPhrase = useMemo(() => {
+    if (!selectedCategory || !selectedPhraseId) {
+      return null;
+    }
+
+    return selectedCategory.phrases.find((phrase) => phrase.phraseId === selectedPhraseId) || null;
+  }, [selectedCategory, selectedPhraseId]);
+
+  const nextCategory = useMemo(
+    () => getNextCategory(categoryState, selectedCategoryId),
+    [categoryState, selectedCategoryId]
+  );
+
+  const previousCategory = useMemo(
+    () => getPreviousCategory(categoryState, selectedCategoryId),
+    [categoryState, selectedCategoryId]
+  );
+
+  const canMoveToNextCategory = Boolean(
+    nextCategory && (nextCategory.unlocked || isCategoryEligibleForNext(selectedCategory))
+  );
+
+  const allCategoryMinimumsCovered = Boolean(
+    categoryState?.categories.length &&
+      categoryState.categories.every((category) => isCategoryEligibleForNext(category))
+  );
+
   const moveToTerminalPhase = useCallback(
     (
       nextPhase: Extract<Phase, "completed" | "abandoned" | "declined" | "unavailable" | "error">,
       nextMessage: string
     ) => {
       setCurrentTask(null);
+      setCategoryState(null);
+      setSelectedCategoryId(null);
+      setSelectedPhraseId(null);
       clearSession();
       setPhase(nextPhase);
       setMessage(nextMessage);
@@ -121,19 +310,19 @@ function App() {
     [apiUrl, moveToTerminalPhase]
   );
 
-  const loadTask = useCallback(
+  const loadCategoryState = useCallback(
     async (tokenOverride?: string | null) => {
       const activeToken = tokenOverride ?? sessionToken;
       if (!activeToken) {
-        moveToTerminalPhase("error", "A session token is required before loading prompts.");
-        return;
+        moveToTerminalPhase("error", "A session token is required before loading categories.");
+        return null;
       }
 
-      setTaskLoading(true);
+      setCategoryLoading(true);
       setMessage("");
 
       try {
-        const response = await fetch(`${apiUrl}/api/get-task`, {
+        const response = await fetch(`${apiUrl}/api/category-state`, {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
@@ -141,14 +330,24 @@ function App() {
           body: JSON.stringify({ sessionToken: activeToken }),
         });
 
-        const data = await response.json();
+        const data = (await response.json()) as CategoryStateApiResponse;
         if (!data.success) {
-          if (data.code === "invalid_session") {
-            moveToTerminalPhase("error", "The previous session could not be resumed.");
-            return;
+          if (data.code === "session_metadata_required") {
+            if (data.session) {
+              syncSession(data.session);
+            }
+            setMetadataMode("required");
+            setPhase("metadata");
+            setMessage(data.message || "Complete the session details before recording.");
+            return null;
           }
 
-          throw new Error(data.message || "Could not load the next prompt.");
+          if (data.code === "invalid_session") {
+            moveToTerminalPhase("error", "The previous session could not be resumed.");
+            return null;
+          }
+
+          throw new Error(data.message || "Could not load category progress.");
         }
 
         if (data.session) {
@@ -156,28 +355,41 @@ function App() {
         }
 
         if (data.sessionStatus === "completed") {
-          moveToTerminalPhase("completed", data.message || "Thank you for completing the session.");
-          return;
+          moveToTerminalPhase(
+            "completed",
+            data.message ||
+              "Thank you. Your recordings were saved. You can come back later on the same browser/device to record more phrases."
+          );
+          return null;
         }
 
         if (data.sessionStatus === "abandoned") {
-          moveToTerminalPhase("abandoned", data.message || "This session has been closed.");
-          return;
+          moveToTerminalPhase(
+            "abandoned",
+            data.message ||
+              "Your submitted recordings were saved. You can come back later on the same browser/device to record more phrases."
+          );
+          return null;
         }
 
-        setCurrentTask((data.task as SessionTask | null) ?? null);
-        setProgress(data.progress);
-        setPhase("task");
+        setCategoryState(data);
+        const nextCategoryId = getInitialCategoryId(data, selectedCategoryId);
+        const nextSelectedCategory = getCategoryById(data, nextCategoryId);
+        setSelectedCategoryId(nextCategoryId);
+        setSelectedPhraseId(getInitialPhraseId(nextSelectedCategory, selectedPhraseId));
+        setPhase("categoryRecording");
+        return data;
       } catch (error) {
         moveToTerminalPhase(
           "error",
-          error instanceof Error ? error.message : "Could not load the next prompt."
+          error instanceof Error ? error.message : "Could not load category progress."
         );
+        return null;
       } finally {
-        setTaskLoading(false);
+        setCategoryLoading(false);
       }
     },
-    [apiUrl, moveToTerminalPhase, sessionToken, setCurrentTask, setProgress, syncSession]
+    [apiUrl, moveToTerminalPhase, selectedCategoryId, selectedPhraseId, sessionToken, syncSession]
   );
 
   const startOrResumeSession = useCallback(
@@ -185,6 +397,9 @@ function App() {
       setPhase("bootstrapping");
       setMessage("");
       setCurrentTask(null);
+      setCategoryState(null);
+      setSelectedCategoryId(null);
+      setSelectedPhraseId(null);
 
       try {
         const activeTurnstileToken = turnstileTokenOverride ?? turnstileToken;
@@ -232,7 +447,8 @@ function App() {
           return;
         }
 
-        await loadTask(data.session.sessionToken);
+        setMetadataMode("edit");
+        setPhase("categoryIntro");
       } catch (error) {
         moveToTerminalPhase(
           "error",
@@ -243,7 +459,6 @@ function App() {
     [
       apiUrl,
       closeSession,
-      loadTask,
       moveToTerminalPhase,
       sessionToken,
       setCurrentTask,
@@ -288,21 +503,30 @@ function App() {
       }
 
       setMetadataMode("edit");
-      await loadTask(session.sessionToken);
+      setMessage("");
+      if (categoryState) {
+        await loadCategoryState(session.sessionToken);
+        return;
+      }
+
+      setPhase("categoryIntro");
     },
-    [closeSession, loadTask, syncSession]
+    [categoryState, closeSession, loadCategoryState, syncSession]
   );
 
   const handleExitSession = useCallback(async () => {
     await closeSession(
       sessionToken,
       "abandoned",
-      "Your submitted recordings were saved. You can safely leave now."
+      "Thank you. Your submitted recordings were saved. You can come back later on the same browser/device to record more phrases."
     );
   }, [closeSession, sessionToken]);
 
   const handleRestart = useCallback(async () => {
     clearSession();
+    setCategoryState(null);
+    setSelectedCategoryId(null);
+    setSelectedPhraseId(null);
     setMetadataMode("required");
     setMessage("");
     if (turnstileSiteKey) {
@@ -313,6 +537,91 @@ function App() {
 
     await startOrResumeSession(null);
   }, [clearSession, startOrResumeSession, turnstileSiteKey]);
+
+  const handleSelectCategory = useCallback((category: CategoryStateCategory) => {
+    if (!category.unlocked) {
+      return;
+    }
+
+    setMessage("");
+    setSelectedCategoryId(category.id);
+    setSelectedPhraseId(getInitialPhraseId(category, null));
+  }, []);
+
+  const handleMoveToPreviousCategory = useCallback(() => {
+    if (!previousCategory?.unlocked) {
+      return;
+    }
+
+    setMessage("");
+    setSelectedCategoryId(previousCategory.id);
+    setSelectedPhraseId(getInitialPhraseId(previousCategory, null));
+  }, [previousCategory]);
+
+  const handleMoveToNextCategory = useCallback(() => {
+    if (!nextCategory || !canMoveToNextCategory) {
+      return;
+    }
+
+    setMessage("");
+    setSelectedCategoryId(nextCategory.id);
+    setSelectedPhraseId(getInitialPhraseId(nextCategory, null));
+  }, [canMoveToNextCategory, nextCategory]);
+
+  const handleRecordingUploaded = useCallback(
+    async (result: { session?: SessionState; sessionStatus?: string }) => {
+      if (result.session) {
+        syncSession(result.session);
+      }
+
+      if (result.sessionStatus === "completed") {
+        moveToTerminalPhase(
+          "completed",
+          "Thank you. Your recordings were saved. You can come back later on the same browser/device to record more phrases."
+        );
+        return;
+      }
+
+      const uploadedCategoryId = selectedCategoryId;
+      const uploadedPhraseId = selectedPhraseId;
+      const refreshedState = await loadCategoryState();
+
+      if (!refreshedState || !uploadedCategoryId) {
+        return;
+      }
+
+      const refreshedCategory = getCategoryById(refreshedState, uploadedCategoryId);
+      if (!refreshedCategory) {
+        return;
+      }
+
+      const nextUnrecordedPhrase =
+        refreshedCategory.phrases.find(
+          (phrase) =>
+            phrase.phraseId !== uploadedPhraseId && !phraseHasBackendRecordedState(phrase)
+        ) || refreshedCategory.phrases.find((phrase) => !phraseHasBackendRecordedState(phrase));
+
+      if (nextUnrecordedPhrase) {
+        setSelectedCategoryId(refreshedCategory.id);
+        setSelectedPhraseId(nextUnrecordedPhrase.phraseId);
+      }
+
+      if (refreshedCategory.complete) {
+        setMessage("Recording saved. All phrases in this category have been recorded.");
+      } else if (isCategoryEligibleForNext(refreshedCategory)) {
+        setMessage("Recording saved. You can continue here or move to the next category.");
+      } else {
+        setMessage("Recording saved. Choose another phrase in this category.");
+      }
+    },
+    [
+      loadCategoryState,
+      moveToTerminalPhase,
+      selectedCategoryId,
+      selectedPhraseId,
+      syncSession,
+    ]
+  );
 
   if (phase === "bootstrapping") {
     return (
@@ -375,14 +684,57 @@ function App() {
       <main className="app-shell">
         <InfoForm
           message={
-            metadataMode === "required"
+            message ||
+            (metadataMode === "required"
               ? "Tell us a little about the recording conditions and confirm consent before you begin."
-              : "Update the session details if something changed."
+              : "Update the session details if something changed.")
           }
           canCancel={metadataMode === "edit" && metadataComplete}
-          onCancel={() => setPhase("task")}
+          onCancel={() => setPhase(categoryState ? "categoryRecording" : "categoryIntro")}
           onSaved={handleMetadataSaved}
         />
+      </main>
+    );
+  }
+
+  if (phase === "categoryIntro") {
+    return (
+      <main className="app-shell">
+        <section className="app-panel app-panel--narrow">
+          <span className="app-eyebrow">{appName}</span>
+          <h1 className="app-title">Category recording</h1>
+          <div className="category-intro-copy">
+            <p>
+              Thank you for helping us collect Finnish short speech samples.
+            </p>
+            <p>
+              The task is divided into categories such as Yes, No, Maybe, Not sure, Correct,
+              and Numbers.
+            </p>
+            <p>
+              Please record at least 3 different phrases from each category when possible.
+              Recording more phrases is very helpful, and recording all phrases is even better.
+            </p>
+            <p>
+              You can listen to each recording before submitting, re-record if needed, and stop
+              the session at any time.
+            </p>
+          </div>
+          <div className="category-intro-actions">
+            <button
+              type="button"
+              className="app-primary-button"
+              onClick={() => void loadCategoryState()}
+              disabled={categoryLoading}
+            >
+              {categoryLoading ? "Loading..." : "Start recording"}
+            </button>
+            <button type="button" className="app-secondary-button" onClick={handleExitSession}>
+              Finish for now
+            </button>
+          </div>
+          {message && <p className="app-inline-message app-inline-message--error">{message}</p>}
+        </section>
       </main>
     );
   }
@@ -458,9 +810,9 @@ function App() {
         <header className="app-header">
           <div className="app-header__content">
             <span className="app-eyebrow">{appName}</span>
-            <h1 className="app-session-title">Current session</h1>
+            <h1 className="app-session-title">Record category phrases</h1>
             <p className="app-copy">
-              {progress.completedTasks} of {progress.totalTasks} prompts saved.
+              Pick a phrase, record it, listen back, and submit it when you are happy with it.
             </p>
           </div>
           <div className="app-header-actions">
@@ -475,50 +827,169 @@ function App() {
               Update details
             </button>
             <button type="button" className="app-secondary-button" onClick={handleExitSession}>
-              Exit
+              Finish for now
             </button>
           </div>
         </header>
 
-        <div className="app-progress" aria-hidden="true">
-          <div
-            className="app-progress__bar"
-            style={{
-              width: progress.totalTasks
-                ? `${(progress.completedTasks / progress.totalTasks) * 100}%`
-                : "0%",
-            }}
-          />
-        </div>
+        {categoryLoading && <p className="app-copy">Loading category progress.</p>}
 
-        {taskLoading && <p className="app-copy">Loading the next prompt.</p>}
-        {!taskLoading && currentTask && <TextContainer task={currentTask} />}
-        {!taskLoading && !currentTask && (
-          <p className="app-copy">No prompt is ready yet. Try refreshing the session.</p>
+        {categoryState && (
+          <>
+            <nav className="category-stepper" aria-label="Recording categories">
+              {categoryState.categories.map((category, index) => {
+                const selected = category.id === selectedCategoryId;
+                const categoryEligible = isCategoryEligibleForNext(category);
+                return (
+                  <button
+                    key={category.id}
+                    type="button"
+                    className={
+                      selected
+                        ? "category-stepper__item category-stepper__item--selected"
+                        : "category-stepper__item"
+                    }
+                    onClick={() => handleSelectCategory(category)}
+                    disabled={!category.unlocked}
+                    aria-current={selected ? "step" : undefined}
+                  >
+                    <span className="category-stepper__number">{index + 1}</span>
+                    <span className="category-stepper__body">
+                      <span className="category-stepper__title">{category.title}</span>
+                      <span className="category-stepper__meta">
+                        {category.progress.uniqueRecordedCount} / {category.totalPhrases} phrases
+                        {categoryEligible ? " covered" : category.unlocked ? " open" : " locked"}
+                      </span>
+                    </span>
+                  </button>
+                );
+              })}
+            </nav>
+
+            {selectedCategory ? (
+              <section className="category-workspace" aria-labelledby="category-title">
+                <div className="category-summary">
+                  <div>
+                    <span className="app-eyebrow">Current category</span>
+                    <h2 id="category-title" className="category-summary__title">
+                      {selectedCategory.title}
+                    </h2>
+                    <p className="app-copy">{getCategoryHelpText(selectedCategory)}</p>
+                  </div>
+                  <div className="category-summary__counter">
+                    Recorded {selectedCategory.progress.uniqueRecordedCount} /{" "}
+                    {selectedCategory.totalPhrases} phrases
+                  </div>
+                </div>
+
+                <div className="category-progress">
+                  <div className="category-progress__bar" aria-hidden="true">
+                    <div
+                      className="category-progress__fill"
+                      style={{ width: `${getProgressPercent(selectedCategory)}%` }}
+                    />
+                  </div>
+                  <div className="category-progress__labels">
+                    <span>{getRequirementText(selectedCategory)}</span>
+                    <span>
+                      {selectedCategory.complete
+                        ? "All phrases recorded"
+                        : `${Math.max(
+                            selectedCategory.requiredCount -
+                              selectedCategory.progress.uniqueRecordedCount,
+                            0
+                          )} more for next category`}
+                    </span>
+                  </div>
+                </div>
+
+                <div className="category-layout">
+                  <div className="category-phrase-list" aria-label="Phrases in this category">
+                    {selectedCategory.phrases.map((phrase) => {
+                      const selected = phrase.phraseId === selectedPhraseId;
+                      return (
+                        <button
+                          key={phrase.phraseId}
+                          type="button"
+                          className={
+                            selected
+                              ? "category-phrase-card category-phrase-card--selected"
+                              : "category-phrase-card"
+                          }
+                          onClick={() => {
+                            setMessage("");
+                            setSelectedPhraseId(phrase.phraseId);
+                          }}
+                        >
+                          <span className="category-phrase-card__text">{phrase.text}</span>
+                          <span className={getPhraseStatusClassName(phrase)}>
+                            {getPhraseStatusLabel(phrase)}
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+
+                  <div className="selected-phrase-panel">
+                    {selectedPhrase ? (
+                      <>
+                        <span className="app-eyebrow">Selected phrase</span>
+                        <h3 className="selected-phrase-panel__text">{selectedPhrase.text}</h3>
+                        <p className="app-copy">
+                          Record this phrase naturally. You can record it again even if it was
+                          already submitted.
+                        </p>
+                        <SoundRecorder
+                          sessionToken={sessionToken}
+                          taskId={selectedPhrase.taskId}
+                          promptedWord={selectedPhrase.text}
+                          onUploadComplete={handleRecordingUploaded}
+                        />
+                      </>
+                    ) : (
+                      <p className="app-copy">Choose a phrase to start recording.</p>
+                    )}
+                  </div>
+                </div>
+
+                <div className="category-navigation">
+                  <button
+                    type="button"
+                    className="app-secondary-button"
+                    onClick={handleMoveToPreviousCategory}
+                    disabled={!previousCategory?.unlocked}
+                  >
+                    Previous category
+                  </button>
+                  <button
+                    type="button"
+                    className="app-primary-button"
+                    onClick={handleMoveToNextCategory}
+                    disabled={!canMoveToNextCategory}
+                  >
+                    Next category
+                  </button>
+                  <button type="button" className="app-secondary-button" onClick={handleExitSession}>
+                    Finish for now
+                  </button>
+                </div>
+
+                {allCategoryMinimumsCovered && (
+                  <div className="category-complete-note">
+                    <strong>All category minimums are covered.</strong>
+                    <span>You can keep recording more phrases or finish for now.</span>
+                  </div>
+                )}
+              </section>
+            ) : (
+              <p className="app-copy">No category is ready yet. Try refreshing the session.</p>
+            )}
+          </>
         )}
 
-        {currentTask && (
-          <SoundRecorder
-            sessionToken={sessionToken}
-            taskId={currentTask.id}
-            promptedWord={currentTask.text}
-            onUploadComplete={(result) => {
-              if (result.session) {
-                syncSession(result.session as SessionState);
-              }
-
-              if (result.sessionStatus === "completed") {
-                moveToTerminalPhase("completed", "Thank you. Your recordings were saved.");
-                return;
-              }
-
-              setMessage("Recording saved. Continue when you are ready for the next prompt.");
-            }}
-            onNextTask={loadTask}
-          />
+        {message && phase === "categoryRecording" && (
+          <p className="app-inline-message">{message}</p>
         )}
-
-        {message && phase === "task" && <p className="app-inline-message">{message}</p>}
       </section>
     </main>
   );

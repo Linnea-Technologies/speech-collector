@@ -58,8 +58,18 @@ CREATE TABLE IF NOT EXISTS recordings (
     metadata JSONB NOT NULL DEFAULT '{}'::jsonb
 );
 
-CREATE UNIQUE INDEX IF NOT EXISTS recordings_session_task_idx
+DROP INDEX IF EXISTS recordings_session_task_idx;
+
+CREATE INDEX IF NOT EXISTS recordings_session_task_lookup_idx
     ON recordings(session_id, task_id);
 
 CREATE INDEX IF NOT EXISTS recordings_session_submitted_idx
     ON recordings(session_id, submitted_at);
+
+CREATE INDEX IF NOT EXISTS participant_sessions_device_id_idx
+    ON participant_sessions ((metadata->>'device_id'))
+    WHERE metadata ? 'device_id';
+
+CREATE INDEX IF NOT EXISTS recordings_phrase_id_idx
+    ON recordings ((metadata->>'phrase_id'))
+    WHERE metadata ? 'phrase_id';

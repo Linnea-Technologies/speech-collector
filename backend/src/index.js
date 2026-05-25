@@ -1,6 +1,7 @@
 import express from 'express';
 import cors from 'cors';
 import multer from 'multer';
+import { randomUUID } from 'crypto';
 import path from 'path';
 import { fileURLToPath } from 'url';
 
@@ -94,6 +95,11 @@ export function buildRecordingMetadata(frontendMetadata, task, submittedAt, stor
     metadata: {
       schema_version: 'v1',
       timestamp: submittedAt,
+      phrase_id:
+        normalizeOptionalString(taskMetadata.phrase_id) ||
+        normalizeOptionalString(taskMetadata.prompt_id) ||
+        normalizeOptionalString(task?.id),
+      semantic_label: normalizeOptionalString(taskMetadata.semantic_label),
       prompted_word: normalizeOptionalString(task?.text),
       normalized_label: normalizedLabel,
       literal_transcript: normalizeOptionalString(literalTranscript),
@@ -294,6 +300,28 @@ export function createApp(options = {}) {
     }
   });
 
+  app.post('/api/category-state', async (req, res) => {
+    const sessionToken = normalizeSessionToken(req.body?.sessionToken);
+    if (!sessionToken) {
+      return res.status(400).json({
+        success: false,
+        code: 'missing_session_token',
+        message: 'sessionToken is required.',
+      });
+    }
+
+    try {
+      const result = await provider.getCategoryState(sessionToken);
+      res.status(result.success ? 200 : 400).json(result);
+    } catch (error) {
+      console.error('Error in /api/category-state:', error);
+      res.status(500).json({
+        success: false,
+        message: 'An internal server error occurred.',
+      });
+    }
+  });
+
   app.post('/api/upload-sound', createUploadMiddleware(upload), async (req, res) => {
     const sessionToken = normalizeSessionToken(req.body?.sessionToken);
     const taskId =
@@ -322,6 +350,7 @@ export function createApp(options = {}) {
       }
 
       const submittedAt = new Date().toISOString();
+      const recordingId = randomUUID();
       const recordingMetadata = buildRecordingMetadata(
         parsedMetadata.metadata,
         uploadTarget.task,
@@ -335,6 +364,7 @@ export function createApp(options = {}) {
       const recording = await fileStorage.saveRecording(file, {
         sessionId: uploadTarget.sessionId,
         taskId,
+        recordingId,
       });
 
       const metadataWithStorage = {
@@ -349,6 +379,7 @@ export function createApp(options = {}) {
       };
 
       const result = await provider.submitRecording(sessionToken, taskId, {
+        recordingId,
         storageType: recording.storageType,
         storageKey: recording.storageKey,
         durationSec: recording.durationSec,

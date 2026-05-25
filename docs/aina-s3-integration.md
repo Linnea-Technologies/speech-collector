@@ -9,7 +9,7 @@ volunteer session
   -> PostgreSQL participant_sessions row
   -> prompt task from tasks/topic copy
   -> upload processed by backend
-  -> deterministic storage_key
+  -> unique storage_key
   -> S3 object key
   -> recordings row
   -> exportDataset.js writes manifests
@@ -20,19 +20,19 @@ volunteer session
 Relative recording key:
 
 ```text
-{session_id}/{task_id}.wav
+{session_id}/{task_id}/{recording_id}.wav
 ```
 
 S3 object key:
 
 ```text
-{COLLECTION_AUDIO_PREFIX}/{session_id}/{task_id}.wav
+{COLLECTION_AUDIO_PREFIX}/{session_id}/{task_id}/{recording_id}.wav
 ```
 
 Example:
 
 ```text
-short-finnish-responses/v1/audio/92b65d47-.../short_finnish_responses_v1_0001_kylla.wav
+short-finnish-responses/v2/audio/92b65d47-.../short_finnish_responses_v2_0001_yes_kylla/11111111-1111-4111-8111-111111111111.wav
 ```
 
 ## Why The Exporter Uses Direct References
@@ -47,6 +47,8 @@ Instead:
 
 That keeps the manifest aligned with the real audio location in both local and S3 modes.
 
+`recordings.id` is generated before storage, and the ID is included in the audio path. Re-recording the same phrase creates a new row and a new object/file instead of overwriting the earlier sample.
+
 ## Local Mode
 
 ```env
@@ -57,7 +59,7 @@ SOUND_RECORDINGS_PATH=tmp/recordings
 Local uploads are persisted to:
 
 ```text
-SOUND_RECORDINGS_PATH/{session_id}/{task_id}.wav
+SOUND_RECORDINGS_PATH/{session_id}/{task_id}/{recording_id}.wav
 ```
 
 Relative local paths are resolved from the `apps/speech-collector` root so backend persistence and export use the same absolute directory.
@@ -66,7 +68,7 @@ Export derives:
 
 ```text
 audio_root=<absolute SOUND_RECORDINGS_PATH>
-audio_path={session_id}/{task_id}.wav
+audio_path={session_id}/{task_id}/{recording_id}.wav
 ```
 
 ## AWS S3 Mode
@@ -75,14 +77,14 @@ audio_path={session_id}/{task_id}.wav
 STORAGE=aws-s3
 AWS_BUCKET_NAME=<bucket>
 AWS_REGION=eu-north-1
-COLLECTION_AUDIO_PREFIX=short-finnish-responses/v1/audio
+COLLECTION_AUDIO_PREFIX=short-finnish-responses/v2/audio
 ```
 
 Export derives:
 
 ```text
 audio_root=s3://<bucket>/<COLLECTION_AUDIO_PREFIX>/
-audio_path={session_id}/{task_id}.wav
+audio_path={session_id}/{task_id}/{recording_id}.wav
 ```
 
 ## Session Status And Export
@@ -119,7 +121,7 @@ cd D:\ass_vscode\AIN\packages\audio-classifier
 python - <<'PY'
 from audio_classifier.data import load_dataset
 
-dataset = load_dataset(r"D:\ass_vscode\AIN\apps\speech-collector\exports\short-finnish-responses\v1")
+dataset = load_dataset(r"D:\ass_vscode\AIN\apps\speech-collector\exports\short-finnish-responses\v2")
 print(f"loaded {len(dataset)} samples")
 print(dataset[0] if dataset else "no samples")
 PY

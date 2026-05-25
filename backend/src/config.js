@@ -10,6 +10,8 @@ const DEFAULT_SOUND_RECORDINGS_PATH = 'tmp/recordings';
 const DEFAULT_MAX_RECORDING_SECONDS = 5;
 const DEFAULT_MAX_UPLOAD_BYTES = 2_000_000;
 const DEFAULT_MAX_RECORDING_DURATION_TOLERANCE_SECONDS = 1;
+const DEFAULT_DATASET_ID = 'short_finnish_responses';
+const DEFAULT_DATASET_VERSION = 'v2';
 
 function normalizePosixPrefix(prefix) {
   return (prefix || '').replace(/\\/g, '/').replace(/^\/+|\/+$/g, '');
@@ -71,9 +73,17 @@ export function getTurnstileSecretKey() {
   return (process.env.TURNSTILE_SECRET_KEY || '').trim();
 }
 
+export function getDatasetId() {
+  return process.env.DATASET_ID || DEFAULT_DATASET_ID;
+}
+
+export function getDatasetVersion() {
+  return process.env.DATASET_VERSION || DEFAULT_DATASET_VERSION;
+}
+
 export function getCollectionAudioPrefix() {
-  const datasetId = (process.env.DATASET_ID || 'short_finnish_responses').replace(/_/g, '-');
-  const datasetVersion = process.env.DATASET_VERSION || 'v1';
+  const datasetId = getDatasetId().replace(/_/g, '-');
+  const datasetVersion = getDatasetVersion();
   return normalizePosixPrefix(
     process.env.COLLECTION_AUDIO_PREFIX || `${datasetId}/${datasetVersion}/audio`
   );

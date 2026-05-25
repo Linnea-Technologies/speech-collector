@@ -8,9 +8,12 @@ interface SoundRecorderProps {
   sessionToken: string | null;
   taskId: string;
   promptedWord: string;
-  onUploadComplete: (result: any) => void;
-  onNextTask: () => Promise<void> | void;
+  onUploadComplete: (result: any) => Promise<void> | void;
+  onNextTask?: () => Promise<void> | void;
+  nextActionLabel?: string;
 }
+
+type TranscriptMode = "same" | "different";
 
 function getMaxRecordingSeconds() {
   const parsed = Number.parseInt(import.meta.env.VITE_MAX_RECORDING_SECONDS || "5", 10);
@@ -23,6 +26,7 @@ const SoundRecorder = ({
   promptedWord,
   onUploadComplete,
   onNextTask,
+  nextActionLabel = "Next prompt",
 }: SoundRecorderProps) => {
   const {
     error: recorderError,
@@ -41,7 +45,8 @@ const SoundRecorder = ({
   const [uploadFailed, setUploadFailed] = useState<boolean>(false);
   const [uploadMessage, setUploadMessage] = useState<string>("");
   const [elapsedSeconds, setElapsedSeconds] = useState<number>(0);
-  const [literalTranscript, setLiteralTranscript] = useState<string>(promptedWord);
+  const [transcriptMode, setTranscriptMode] = useState<TranscriptMode>("same");
+  const [literalTranscript, setLiteralTranscript] = useState<string>("");
   const clearBlobUrlRef = useRef(clearBlobUrl);
   const stopRecordingRef = useRef(stopRecording);
   const maxRecordingSeconds = getMaxRecordingSeconds();
@@ -58,9 +63,10 @@ const SoundRecorder = ({
     setUploadFailed(false);
     setUploadMessage("");
     setElapsedSeconds(0);
-    setLiteralTranscript(promptedWord);
+    setTranscriptMode("same");
+    setLiteralTranscript("");
     clearBlobUrlRef.current();
-  }, [promptedWord, taskId]);
+  }, [taskId]);
 
   useEffect(() => {
     if (status !== "recording") {
@@ -88,9 +94,10 @@ const SoundRecorder = ({
   useEffect(() => {
     if (status === "stopped" && mediaBlobUrl) {
       setElapsedSeconds(maxRecordingSeconds);
-      setLiteralTranscript(promptedWord);
+      setTranscriptMode("same");
+      setLiteralTranscript("");
     }
-  }, [maxRecordingSeconds, mediaBlobUrl, promptedWord, status]);
+  }, [maxRecordingSeconds, mediaBlobUrl, status]);
 
   const handleStartRecording = () => {
     clearBlobUrl();
@@ -98,14 +105,14 @@ const SoundRecorder = ({
     setUploadFailed(false);
     setUploadMessage("");
     setElapsedSeconds(0);
-    setLiteralTranscript(promptedWord);
+    setTranscriptMode("same");
+    setLiteralTranscript("");
     startRecording();
   };
 
   const buildUploadMetadata = () => {
     const trimmedTranscript = literalTranscript.trim();
-    const trimmedPrompt = promptedWord.trim();
-    const userConfirmed = Boolean(trimmedTranscript) && trimmedTranscript !== trimmedPrompt;
+    const userConfirmed = transcriptMode === "different" && Boolean(trimmedTranscript);
     const settings = previewAudioStream?.getAudioTracks()[0]?.getSettings();
 
     return {
@@ -153,21 +160,46 @@ const SoundRecorder = ({
         {mediaBlobUrl ? (
           <>
             <audio src={mediaBlobUrl} controls />
-            <label className="recorder-transcript" htmlFor={`literal-transcript-${taskId}`}>
-              <span>What did you actually say? (optional)</span>
+            <div className="recorder-transcript">
+              <span>What did you actually say?</span>
+              <div className="recorder-transcript__options">
+                <button
+                  type="button"
+                  className={
+                    transcriptMode === "same"
+                      ? "recorder-transcript__choice recorder-transcript__choice--selected"
+                      : "recorder-transcript__choice"
+                  }
+                  onClick={() => {
+                    setTranscriptMode("same");
+                    setLiteralTranscript("");
+                  }}
+                >
+                  Same as shown
+                </button>
+              </div>
+              <label
+                className="recorder-transcript__different"
+                htmlFor={`literal-transcript-${taskId}`}
+              >
+                <span>I said it differently / in my local dialect</span>
+                <input
+                  id={`literal-transcript-${taskId}`}
+                  type="text"
+                  value={literalTranscript}
+                  onFocus={() => setTranscriptMode("different")}
+                  onChange={(event) => {
+                    setTranscriptMode("different");
+                    setLiteralTranscript(event.target.value);
+                  }}
+                  placeholder="Type what you actually said"
+                  className="recorder-transcript__input"
+                />
+              </label>
               <span className="recorder-transcript__helper">
-                Leave this as shown if you followed the prompt. If you said a shorter or dialect
-                form, you can write it here, for example <code>kyl</code> instead of{" "}
-                <code>kyllä</code>.
+                Leave the field empty to submit this as "{promptedWord}".
               </span>
-              <input
-                id={`literal-transcript-${taskId}`}
-                type="text"
-                value={literalTranscript}
-                onChange={(event) => setLiteralTranscript(event.target.value)}
-                className="recorder-transcript__input"
-              />
-            </label>
+            </div>
           </>
         ) : (
           <p className="app-copy">
@@ -210,9 +242,10 @@ const SoundRecorder = ({
               setUploadFailed(false);
               setUploadMessage("");
               const result = await uploadSound();
-              setTaskDone(result.sessionStatus !== "completed");
+              setTaskDone(Boolean(onNextTask) && result.sessionStatus !== "completed");
+              clearBlobUrlRef.current();
               setUploadMessage("Recording saved.");
-              onUploadComplete(result);
+              await onUploadComplete(result);
             } catch (error) {
               setUploadFailed(true);
               setUploadMessage(
@@ -226,18 +259,20 @@ const SoundRecorder = ({
         >
           {soundUploading ? "Uploading..." : "Upload"}
         </button>
-        <button
-          type="button"
-          className="app-secondary-button"
-          onClick={() => {
-            setTaskDone(false);
-            setUploadMessage("");
-            void onNextTask();
-          }}
-          disabled={!taskDone}
-        >
-          Next prompt
-        </button>
+        {onNextTask && (
+          <button
+            type="button"
+            className="app-secondary-button"
+            onClick={() => {
+              setTaskDone(false);
+              setUploadMessage("");
+              void onNextTask();
+            }}
+            disabled={!taskDone}
+          >
+            {nextActionLabel}
+          </button>
+        )}
       </div>
 
       {status === "recording" && (

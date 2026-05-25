@@ -107,10 +107,23 @@ export function getDurationSec(row) {
   return 0.001;
 }
 
+export function getPhraseId(row) {
+  return (
+    row.recording_metadata?.phrase_id ||
+    row.task_metadata?.phrase_id ||
+    row.task_metadata?.prompt_id ||
+    null
+  );
+}
+
+export function getSemanticLabel(row) {
+  return row.recording_metadata?.semantic_label || row.task_metadata?.semantic_label || null;
+}
+
 export function buildDatasetMetadata(rows, labels, audioRoot) {
   return {
     dataset_id: configValue('DATASET_ID', 'short_finnish_responses'),
-    version: configValue('DATASET_VERSION', 'v1'),
+    version: configValue('DATASET_VERSION', 'v2'),
     language: configValue('DATASET_LANGUAGE', 'fi'),
     description: configValue(
       'DATASET_DESCRIPTION',
@@ -138,6 +151,8 @@ export function buildSample(row, index, dataset) {
   const promptedWord = recordingMetadata.prompted_word || row.transcript;
   const language = recordingMetadata.language || row.language || dataset.language;
   const category = recordingMetadata.category || row.category || null;
+  const phraseId = getPhraseId(row);
+  const semanticLabel = getSemanticLabel(row);
   const sessionTechnical =
     sessionMetadata.technical && typeof sessionMetadata.technical === 'object'
       ? sessionMetadata.technical
@@ -151,6 +166,8 @@ export function buildSample(row, index, dataset) {
     sample_id: sampleId,
     audio_path: row.storage_key,
     prompted_word: promptedWord,
+    phrase_id: phraseId,
+    semantic_label: semanticLabel,
     normalized_label: normalizedLabel,
     label: normalizedLabel,
     transcript: promptedWord,
@@ -179,6 +196,8 @@ export function buildSample(row, index, dataset) {
         submitted_at: row.submitted_at,
         storage_type: row.storage_type,
         category,
+        phrase_id: phraseId,
+        semantic_label: semanticLabel,
       },
       storage: {
         storage_type: row.storage_type,
@@ -300,7 +319,7 @@ export function buildStorageFilterSummary({
 export async function exportDataset() {
   config();
   const outputDir = path.resolve(
-    configValue('DATASET_OUTPUT_DIR', './exports/short-finnish-responses/v1')
+    configValue('DATASET_OUTPUT_DIR', './exports/short-finnish-responses/v2')
   );
   const metadataDir = path.join(outputDir, 'metadata');
   ensureDirectory(metadataDir);

@@ -118,7 +118,7 @@
     "type": "consent_markdown_yes_no",
     "id": "consent_response",
     "required": true,
-    "markdown": "### Consent to participate\nBy choosing **Yes**, you confirm that:\n\n- these recordings are collected for a speech-classifier project\n- your recordings and session details may be stored, reviewed, and exported for research and model development\n- an anonymous browser ID may be stored in this browser to group recordings from the same device\n- basic browser, device, and microphone information may be collected automatically to understand recording quality\n- no name, email, phone number, or real hardware serial number is collected\n- participation is voluntary and you may stop at any time",
+    "markdown": "### Consent to participate\nBy choosing **Yes**, you confirm that:\n\n- these recordings are collected for a speech-classifier project\n- your recordings and session details may be stored, reviewed, and exported for research and model development\n- an anonymous random browser ID is stored in this browser so we can resume an active session and show which phrases this browser has already recorded\n- the browser ID is not a hardware serial number and does not include your name, email, or phone number\n- clearing browser storage removes this ID from this browser, but recordings already submitted remain stored under the previous anonymous ID\n- basic browser, device, and microphone information may be collected automatically to understand recording quality\n- participation is voluntary and you may stop at any time",
     "options": [
       {
         "value": "yes",

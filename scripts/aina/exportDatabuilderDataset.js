@@ -13,6 +13,8 @@ import {
   filterRowsForActiveStorage,
   getActiveStorageType,
   getDurationSec,
+  getPhraseId,
+  getSemanticLabel,
   pseudonymizeDeviceId,
   pseudonymizeSpeaker,
 } from './exportDataset.js';
@@ -23,7 +25,7 @@ import {
 } from '../../backend/src/config.js';
 import { FileStorage } from '../../backend/src/fileStorage.js';
 
-const DEFAULT_DATABUILDER_OUTPUT_DIR = './exports/short-finnish-responses/v1/databuilder';
+const DEFAULT_DATABUILDER_OUTPUT_DIR = './exports/short-finnish-responses/v2/databuilder';
 const DEFAULT_DATABUILDER_MANIFEST_VERSION = '20260501001';
 export const NO_CLASSIFIER_READY_RECORDINGS_MESSAGE =
   'No classifier-ready recordings found. Record fresh samples after the 16 kHz processed-audio fix or reprocess legacy audio.';
@@ -200,6 +202,8 @@ export function buildDatabuilderSidecar(row) {
   const category =
     normalizeOptionalString(recordingMetadata.category) ||
     normalizeOptionalString(row.category);
+  const phraseId = getPhraseId(row);
+  const semanticLabel = getSemanticLabel(row);
   const submittedAt = normalizeTimestamp(row.submitted_at || recordingMetadata.timestamp);
 
   if (!normalizedLabel) {
@@ -210,6 +214,8 @@ export function buildDatabuilderSidecar(row) {
     sample_id: sampleId,
     timestamp: submittedAt,
     prompted_word: promptedWord,
+    phrase_id: phraseId,
+    semantic_label: semanticLabel,
     normalized_label: normalizedLabel,
     literal_transcript: recordingMetadata.literal_transcript ?? null,
     label_source: recordingMetadata.label_source || 'prompt_assumed',
@@ -237,6 +243,8 @@ export function buildDatabuilderSidecar(row) {
       submitted_at: submittedAt,
       storage_type: row.storage_type,
       category: category || null,
+      phrase_id: phraseId,
+      semantic_label: semanticLabel,
     },
     storage: getDatabuilderStorageInfo(row),
   };
