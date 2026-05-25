@@ -702,18 +702,15 @@ function App() {
       <main className="app-shell">
         <section className="app-panel app-panel--narrow">
           <span className="app-eyebrow">{appName}</span>
-          <h1 className="app-title">Category recording</h1>
+          <h1 className="app-title">Record Finnish short responses</h1>
           <div className="category-intro-copy">
             <p>
-              Thank you for helping us collect Finnish short speech samples.
-            </p>
-            <p>
-              The task is divided into categories such as Yes, No, Maybe, Not sure, Correct,
-              and Numbers.
+              You will see short Finnish response phrases grouped by meaning, such as Yes, No,
+              Maybe, Not sure, Correct, and Numbers.
             </p>
             <p>
               Please record at least 3 different phrases from each category when possible.
-              Recording more phrases is very helpful, and recording all phrases is even better.
+              Recording more phrases helps us build a more balanced dataset.
             </p>
             <p>
               You can listen to each recording before submitting, re-record if needed, and stop

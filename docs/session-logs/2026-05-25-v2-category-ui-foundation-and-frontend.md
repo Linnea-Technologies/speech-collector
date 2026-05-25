@@ -54,6 +54,7 @@ Implement the v2 category phrase recording UI for the volunteer Speech Collector
 ## Responsive UI Polish
 
 - Added mobile/tablet/desktop layout polish for the category intro and category recording screens.
+- Polished the category intro copy from the earlier category-focused wording to the more volunteer-friendly title `Record Finnish short responses` with a shorter explanation of the grouped phrase recording task.
 - The app shell and panels now use constrained viewport widths, smaller mobile padding, and overflow-safe wrapping to avoid expected page-level horizontal scrolling.
 - The category stepper uses contained horizontal scrolling on phone widths and switches to a wrapped grid on tablet/desktop widths.
 - Phrase cards now use an adaptive grid:
