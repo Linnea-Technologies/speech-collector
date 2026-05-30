@@ -183,6 +183,8 @@ test('buildSample uses recording id and v1 labels in the manifest row', () => {
       recording_metadata: {
         schema_version: 'v1',
         prompted_word: 'Kyllä',
+        phrase_id: 'yes_kylla',
+        semantic_label: 'yes',
         normalized_label: 'kylla',
         literal_transcript: 'kyl',
         label_source: 'user_confirmed',
@@ -206,6 +208,8 @@ test('buildSample uses recording id and v1 labels in the manifest row', () => {
   assert.equal(sample.sample_id, 'recording-123');
   assert.equal(sample.audio_path, 'session-123/short_finnish_responses_v1_0001_kylla.wav');
   assert.equal(sample.prompted_word, 'Kyllä');
+  assert.equal(sample.phrase_id, 'yes_kylla');
+  assert.equal(sample.semantic_label, 'yes');
   assert.equal(sample.normalized_label, 'kylla');
   assert.equal(sample.label, 'kylla');
   assert.equal(sample.literal_transcript, 'kyl');
@@ -222,6 +226,39 @@ test('buildSample uses recording id and v1 labels in the manifest row', () => {
     encoding: 'pcm_s16le',
   });
   assert.equal(sample.metadata.collection.session_status, 'completed');
+  assert.equal(sample.metadata.collection.phrase_id, 'yes_kylla');
+  assert.equal(sample.metadata.collection.semantic_label, 'yes');
+});
+
+test('buildSample keeps legacy semantic fields nullable', () => {
+  const dataset = buildDatasetMetadata([], ['kylla'], 'local-root');
+  const sample = buildSample(
+    {
+      recording_id: 'recording-legacy',
+      session_id: 'session-legacy',
+      session_status: 'abandoned',
+      session_metadata: {},
+      topic_id: 'short_finnish_responses_v1_0001',
+      task_id: 'short_finnish_responses_v1_0001_kylla',
+      storage_type: 'local',
+      storage_key: 'session-legacy/short_finnish_responses_v1_0001_kylla.wav',
+      transcript: 'Kylla',
+      label: 'kylla',
+      language: 'fi',
+      category: 'affirmative',
+      duration_sec: 0.82,
+      submitted_at: '2026-04-22T10:00:00.000Z',
+      recording_metadata: {},
+      task_metadata: {},
+    },
+    0,
+    dataset
+  );
+
+  assert.equal(sample.phrase_id, null);
+  assert.equal(sample.semantic_label, null);
+  assert.equal(sample.metadata.collection.phrase_id, null);
+  assert.equal(sample.metadata.collection.semantic_label, null);
 });
 
 test('speaker id is stable for the same device id across sessions', () => {

@@ -37,8 +37,12 @@ export function getProcessedAudioMetadata() {
   };
 }
 
-export function buildRecordingStorageKey(sessionId, taskId) {
-  return normalizeStorageKey(sessionId, `${taskId}.wav`);
+export function buildRecordingStorageKey(sessionId, taskId, recordingId) {
+  if (!recordingId) {
+    throw new Error('recordingId is required to build a unique recording storage key.');
+  }
+
+  return normalizeStorageKey(sessionId, taskId, `${recordingId}.wav`);
 }
 
 export class RecordingTooLongError extends Error {
@@ -155,7 +159,7 @@ export class FileStorage {
     ensureDirectory(path.dirname(finalPath));
 
     if (fs.existsSync(finalPath)) {
-      fs.unlinkSync(finalPath);
+      throw new Error(`Refusing to overwrite an existing recording: ${storageKey}`);
     }
 
     fs.copyFileSync(tempFilePath, finalPath);
@@ -202,9 +206,9 @@ export class FileStorage {
     return destinationPath;
   }
 
-  async saveRecording(file, { sessionId, taskId }) {
-    const storageKey = buildRecordingStorageKey(sessionId, taskId);
-    const tempFilePath = this.getTempFilePath(sessionId, taskId);
+  async saveRecording(file, { sessionId, taskId, recordingId }) {
+    const storageKey = buildRecordingStorageKey(sessionId, taskId, recordingId);
+    const tempFilePath = this.getTempFilePath(sessionId, `${taskId}-${recordingId}`);
 
     try {
       if (!Buffer.isBuffer(file.buffer) || file.buffer.length === 0) {

@@ -23,7 +23,7 @@ browser
 1. Replace volunteer login/account routes with anonymous session routes.
 2. Replace `users`-based task assignment with `participant_sessions` + `recordings`.
 3. Keep prompt copies as immutable topics/tasks seeded ahead of time.
-4. Store audio with deterministic `{session_id}/{task_id}.wav` relative keys.
+4. Store audio with unique `{session_id}/{task_id}/{recording_id}.wav` relative keys.
 5. Make the exporter reference the real storage layout directly instead of copying local audio as the canonical path.
 6. Replace login-first frontend UX with intro, metadata, recording, exit, and completion states.
 
@@ -31,6 +31,7 @@ browser
 
 - `POST /api/start-session`
 - `POST /api/get-task`
+- `POST /api/category-state`
 - `POST /api/update-session-metadata`
 - `POST /api/upload-sound`
 - `POST /api/exit-session`
@@ -45,7 +46,7 @@ browser
 
 ## Storage Contract
 
-- `storage_key` is always relative, for example `session-id/task-id.wav`
+- `storage_key` is always relative, for example `session-id/task-id/recording-id.wav`
 - S3 object key is `{COLLECTION_AUDIO_PREFIX}/{storage_key}`
 - export manifest `audio_path` is `storage_key`
 - export `audio_root` points at the permanent storage root

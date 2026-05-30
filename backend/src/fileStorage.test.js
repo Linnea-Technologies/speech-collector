@@ -29,10 +29,14 @@ afterEach(() => {
   }
 });
 
-test('buildRecordingStorageKey uses a stable session/task layout', () => {
+test('buildRecordingStorageKey uses a unique session/task/recording layout', () => {
   assert.equal(
-    buildRecordingStorageKey('session-123', 'short_finnish_responses_v1_0001_kylla'),
-    'session-123/short_finnish_responses_v1_0001_kylla.wav'
+    buildRecordingStorageKey(
+      'session-123',
+      'short_finnish_responses_v2_0001_yes_kylla',
+      'recording-789'
+    ),
+    'session-123/short_finnish_responses_v2_0001_yes_kylla/recording-789.wav'
   );
 });
 
@@ -78,7 +82,7 @@ test('local persistence writes files under the same root the exporter publishes'
 
   const recordingsRoot = path.join(tempRoot, 'recordings');
   const sourceFilePath = path.join(tempRoot, 'source.wav');
-  const storageKey = buildRecordingStorageKey('session-123', 'task-456');
+  const storageKey = buildRecordingStorageKey('session-123', 'task-456', 'recording-789');
 
   process.env.STORAGE = 'local';
   process.env.SOUND_RECORDINGS_PATH = path.relative(appRoot, recordingsRoot);
@@ -87,7 +91,7 @@ test('local persistence writes files under the same root the exporter publishes'
   fs.writeFileSync(sourceFilePath, Buffer.from('wav-data'));
 
   const finalPath = await storage.persistLocally(sourceFilePath, storageKey);
-  const expectedPath = path.join(inferAudioRoot(), 'session-123', 'task-456.wav');
+  const expectedPath = path.join(inferAudioRoot(), 'session-123', 'task-456', 'recording-789.wav');
 
   assert.equal(finalPath, expectedPath);
   assert.equal(fs.readFileSync(finalPath, 'utf-8'), 'wav-data');
@@ -111,8 +115,9 @@ test('saveRecording returns processed audio metadata with persisted local record
 
   const result = await storage.saveRecording(
     { buffer: Buffer.from('wav-data') },
-    { sessionId: 'session-123', taskId: 'task-456' }
+    { sessionId: 'session-123', taskId: 'task-456', recordingId: 'recording-789' }
   );
 
   assert.deepEqual(result.processedAudio, getProcessedAudioMetadata());
+  assert.equal(result.storageKey, 'session-123/task-456/recording-789.wav');
 });

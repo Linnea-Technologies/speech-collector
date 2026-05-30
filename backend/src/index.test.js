@@ -14,6 +14,7 @@ import { RecordingTooLongError } from './fileStorage.js';
 function createProvider(overrides = {}) {
   return {
     startSessionCalls: 0,
+    getCategoryStateCalls: 0,
     getUploadTargetCalls: 0,
     submitRecordingCalls: 0,
     async startSession() {
@@ -31,9 +32,20 @@ function createProvider(overrides = {}) {
           metadata: {
             label: 'kylla',
             language: 'fi',
-            category: 'affirmative',
+            category: 'yes',
+            phrase_id: 'yes_kylla',
+            semantic_label: 'yes',
           },
         },
+      };
+    },
+    async getCategoryState() {
+      this.getCategoryStateCalls += 1;
+      return {
+        success: true,
+        categoryOrder: ['yes'],
+        activeCategoryId: 'yes',
+        categories: [],
       };
     },
     async submitRecording(_sessionToken, _taskId, recordingDetails) {
@@ -48,12 +60,14 @@ function createProvider(overrides = {}) {
 function createFileStorage(overrides = {}) {
   return {
     saveRecordingCalls: 0,
-    async saveRecording() {
+    async saveRecording(_file, options) {
       this.saveRecordingCalls += 1;
+      this.lastSaveOptions = options;
+      const storageKey = `${options.sessionId}/${options.taskId}/${options.recordingId}.wav`;
       return {
         storageType: 'local',
-        storageKey: 'session-123/task-123.wav',
-        objectKey: 'session-123/task-123.wav',
+        storageKey,
+        objectKey: storageKey,
         bucketName: null,
         durationSec: 0.8,
         processedAudio: {
@@ -113,7 +127,9 @@ test('buildRecordingMetadata accepts null literal_transcript and defaults label_
       metadata: {
         label: 'kylla',
         language: 'fi',
-        category: 'affirmative',
+        category: 'yes',
+        phrase_id: 'yes_kylla',
+        semantic_label: 'yes',
       },
     },
     '2026-05-03T12:00:00.000Z'
@@ -123,6 +139,8 @@ test('buildRecordingMetadata accepts null literal_transcript and defaults label_
   assert.equal(result.metadata.literal_transcript, null);
   assert.equal(result.metadata.label_source, 'prompt_assumed');
   assert.equal(result.metadata.prompted_word, 'Kyllä');
+  assert.equal(result.metadata.phrase_id, 'yes_kylla');
+  assert.equal(result.metadata.semantic_label, 'yes');
   assert.equal(result.metadata.normalized_label, 'kylla');
 });
 
@@ -144,6 +162,40 @@ test('buildRecordingMetadata stores user-confirmed literal transcript', () => {
   assert.equal(result.success, true);
   assert.equal(result.metadata.literal_transcript, 'kyl');
   assert.equal(result.metadata.label_source, 'user_confirmed');
+});
+
+test('buildRecordingMetadata ignores frontend-provided trusted label fields', () => {
+  const result = buildRecordingMetadata(
+    {
+      phrase_id: 'malicious_phrase',
+      semantic_label: 'malicious_semantic',
+      normalized_label: 'malicious_label',
+      category: 'malicious_category',
+      language: 'xx',
+      prompted_word: 'malicious prompt',
+      literal_transcript: null,
+    },
+    {
+      id: 'task-123',
+      text: 'Kyl',
+      metadata: {
+        phrase_id: 'yes_kyl',
+        semantic_label: 'yes',
+        label: 'kyl',
+        category: 'yes',
+        language: 'fi',
+      },
+    },
+    '2026-05-03T12:00:00.000Z'
+  );
+
+  assert.equal(result.success, true);
+  assert.equal(result.metadata.phrase_id, 'yes_kyl');
+  assert.equal(result.metadata.semantic_label, 'yes');
+  assert.equal(result.metadata.normalized_label, 'kyl');
+  assert.equal(result.metadata.category, 'yes');
+  assert.equal(result.metadata.language, 'fi');
+  assert.equal(result.metadata.prompted_word, 'Kyl');
 });
 
 test('too-large uploads are rejected before provider or storage work', async () => {
@@ -285,11 +337,43 @@ test('upload continues past upload target when session metadata is valid', async
     assert.equal(provider.getUploadTargetCalls, 1);
     assert.equal(fileStorage.saveRecordingCalls, 1);
     assert.equal(provider.submitRecordingCalls, 1);
+    assert.match(fileStorage.lastSaveOptions.recordingId, /^[0-9a-f-]{36}$/);
+    assert.equal(provider.lastRecordingDetails.recordingId, fileStorage.lastSaveOptions.recordingId);
+    assert.equal(
+      provider.lastRecordingDetails.storageKey,
+      `session-123/task-123/${fileStorage.lastSaveOptions.recordingId}.wav`
+    );
+    assert.equal(provider.lastRecordingDetails.metadata.phrase_id, 'yes_kylla');
+    assert.equal(provider.lastRecordingDetails.metadata.semantic_label, 'yes');
     assert.deepEqual(provider.lastRecordingDetails.metadata.processed_audio, {
       sample_rate_hz: 16000,
       channel_count: 1,
       encoding: 'pcm_s16le',
     });
+  });
+});
+
+test('category-state endpoint returns provider category progress', async () => {
+  const provider = createProvider();
+  const app = createApp({
+    provider,
+    fileStorage: createFileStorage(),
+    turnstileSecretKey: '',
+  });
+
+  await withServer(app, async (baseUrl) => {
+    const response = await fetch(`${baseUrl}/api/category-state`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sessionToken: 'session-token' }),
+    });
+    const body = await response.json();
+
+    assert.equal(response.status, 200);
+    assert.equal(body.success, true);
+    assert.deepEqual(body.categoryOrder, ['yes']);
+    assert.equal(body.activeCategoryId, 'yes');
+    assert.equal(provider.getCategoryStateCalls, 1);
   });
 });
 

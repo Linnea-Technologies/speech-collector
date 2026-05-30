@@ -1,17 +1,22 @@
 .recorder-panel {
-  margin-top: 20px;
+  margin-top: 16px;
   border: 1px solid #d7e2ea;
   border-radius: 8px;
-  padding: 20px;
+  padding: 14px;
   background: #f9fbfc;
+  min-width: 0;
+  overflow: hidden;
 }
 
 .recorder-preview {
   margin-bottom: 16px;
+  min-width: 0;
 }
 
 .recorder-preview audio {
   width: 100%;
+  max-width: 100%;
+  display: block;
 }
 
 .recorder-transcript {
@@ -20,6 +25,37 @@
   gap: 8px;
   margin-top: 16px;
   color: #12324a;
+}
+
+.recorder-transcript__options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.recorder-transcript__choice {
+  border: 1px solid #c6d4de;
+  border-radius: 8px;
+  background: #ffffff;
+  color: #12324a;
+  min-height: 44px;
+  padding: 8px 12px;
+  cursor: pointer;
+  line-height: 1.2;
+  text-align: center;
+}
+
+.recorder-transcript__choice--selected {
+  border-color: #0f766e;
+  background: #e8f4f2;
+  color: #0b5f58;
+  font-weight: 700;
+}
+
+.recorder-transcript__different {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
 }
 
 .recorder-transcript__helper {
@@ -36,21 +72,47 @@
 }
 
 .recorder-transcript__input {
+  width: 100%;
+  min-height: 44px;
   border: 1px solid #c6d4de;
   border-radius: 8px;
   padding: 10px 12px;
   background: #ffffff;
   color: #12324a;
+  min-width: 0;
+}
+
+.recorder-transcript__choice:focus-visible,
+.recorder-transcript__input:focus-visible {
+  outline: 3px solid rgba(15, 118, 110, 0.32);
+  outline-offset: 2px;
 }
 
 .recorder-actions {
   display: flex;
-  gap: 12px;
+  gap: 10px;
   flex-wrap: wrap;
 }
 
-@media (max-width: 720px) {
+.recorder-actions > button {
+  flex: 1 1 132px;
+}
+
+@media (max-width: 420px) {
   .recorder-actions > button {
+    flex-basis: 100%;
     width: 100%;
+  }
+}
+
+@media (min-width: 720px) {
+  .recorder-panel {
+    padding: 18px;
+  }
+}
+
+@media (min-width: 960px) {
+  .recorder-panel {
+    padding: 20px;
   }
 }

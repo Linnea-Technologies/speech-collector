@@ -1,29 +1,369 @@
 {
   "dataset_id": "short_finnish_responses",
-  "version": "v1",
+  "version": "v2",
   "language": "fi",
+  "category_order": ["yes", "no", "maybe", "dont_know", "correct", "number"],
+  "categories": [
+    { "id": "yes", "title": "Yes", "required_count": 3 },
+    { "id": "no", "title": "No", "required_count": 3 },
+    { "id": "maybe", "title": "Maybe", "required_count": 3 },
+    { "id": "dont_know", "title": "Don't know / Not sure", "required_count": 3 },
+    { "id": "correct", "title": "That's correct", "required_count": 3 },
+    { "id": "number", "title": "Numbers", "required_count": 3 }
+  ],
   "prompts": [
-    { "id": "kylla", "label": "kylla", "text": "Kyllä", "category": "affirmative" },
-    { "id": "joo", "label": "joo", "text": "Joo", "category": "affirmative" },
-    { "id": "niin", "label": "niin", "text": "Niin", "category": "affirmative" },
-    { "id": "on", "label": "on", "text": "On", "category": "affirmative" },
-    { "id": "okei", "label": "okei", "text": "Okei", "category": "affirmative" },
-    { "id": "ei", "label": "ei", "text": "Ei", "category": "negative" },
-    { "id": "en", "label": "en", "text": "En", "category": "negative" },
-    { "id": "eipa", "label": "eipa", "text": "Eipä", "category": "negative" },
-    { "id": "yksi", "label": "1", "text": "Yksi", "category": "number" },
-    { "id": "kaksi", "label": "2", "text": "Kaksi", "category": "number" },
-    { "id": "kolme", "label": "3", "text": "Kolme", "category": "number" },
-    { "id": "nelja", "label": "4", "text": "Neljä", "category": "number" },
-    { "id": "viisi", "label": "5", "text": "Viisi", "category": "number" },
-    { "id": "kuusi", "label": "6", "text": "Kuusi", "category": "number" },
-    { "id": "seitseman", "label": "7", "text": "Seitsemän", "category": "number" },
-    { "id": "kahdeksan", "label": "8", "text": "Kahdeksan", "category": "number" },
-    { "id": "yhdeksan", "label": "9", "text": "Yhdeksän", "category": "number" },
-    { "id": "kymmenen", "label": "10", "text": "Kymmenen", "category": "number" },
-    { "id": "kiitos", "label": "kiitos", "text": "Kiitos", "category": "common" },
-    { "id": "anteeksi", "label": "anteeksi", "text": "Anteeksi", "category": "common" },
-    { "id": "hei", "label": "hei", "text": "Hei", "category": "common" }
+    {
+      "id": "yes_kylla",
+      "phrase_id": "yes_kylla",
+      "label": "kylla",
+      "semantic_label": "yes",
+      "text": "Kyllä",
+      "category": "yes"
+    },
+    {
+      "id": "yes_kyl",
+      "phrase_id": "yes_kyl",
+      "label": "kyl",
+      "semantic_label": "yes",
+      "text": "Kyl",
+      "category": "yes"
+    },
+    {
+      "id": "yes_joo",
+      "phrase_id": "yes_joo",
+      "label": "joo",
+      "semantic_label": "yes",
+      "text": "Joo",
+      "category": "yes"
+    },
+    {
+      "id": "yes_juu",
+      "phrase_id": "yes_juu",
+      "label": "juu",
+      "semantic_label": "yes",
+      "text": "Juu",
+      "category": "yes"
+    },
+    {
+      "id": "yes_on",
+      "phrase_id": "yes_on",
+      "label": "on",
+      "semantic_label": "yes",
+      "text": "On",
+      "category": "yes"
+    },
+    {
+      "id": "yes_on_ollut",
+      "phrase_id": "yes_on_ollut",
+      "label": "on_ollut",
+      "semantic_label": "yes",
+      "text": "On ollut",
+      "category": "yes"
+    },
+    {
+      "id": "yes_olen",
+      "phrase_id": "yes_olen",
+      "label": "olen",
+      "semantic_label": "yes",
+      "text": "Olen",
+      "category": "yes"
+    },
+    {
+      "id": "yes_olen_ollut",
+      "phrase_id": "yes_olen_ollut",
+      "label": "olen_ollut",
+      "semantic_label": "yes",
+      "text": "Olen ollut",
+      "category": "yes"
+    },
+    {
+      "id": "no_ei",
+      "phrase_id": "no_ei",
+      "label": "ei",
+      "semantic_label": "no",
+      "text": "Ei",
+      "category": "no"
+    },
+    {
+      "id": "no_ei_ole",
+      "phrase_id": "no_ei_ole",
+      "label": "ei_ole",
+      "semantic_label": "no",
+      "text": "Ei ole",
+      "category": "no"
+    },
+    {
+      "id": "no_ei_oo",
+      "phrase_id": "no_ei_oo",
+      "label": "ei_oo",
+      "semantic_label": "no",
+      "text": "Ei oo",
+      "category": "no"
+    },
+    {
+      "id": "no_en",
+      "phrase_id": "no_en",
+      "label": "en",
+      "semantic_label": "no",
+      "text": "En",
+      "category": "no"
+    },
+    {
+      "id": "no_en_ole",
+      "phrase_id": "no_en_ole",
+      "label": "en_ole",
+      "semantic_label": "no",
+      "text": "En ole",
+      "category": "no"
+    },
+    {
+      "id": "no_en_oo",
+      "phrase_id": "no_en_oo",
+      "label": "en_oo",
+      "semantic_label": "no",
+      "text": "En oo",
+      "category": "no"
+    },
+    {
+      "id": "maybe_ehka",
+      "phrase_id": "maybe_ehka",
+      "label": "ehka",
+      "semantic_label": "maybe",
+      "text": "Ehkä",
+      "category": "maybe"
+    },
+    {
+      "id": "maybe_mahdollisesti",
+      "phrase_id": "maybe_mahdollisesti",
+      "label": "mahdollisesti",
+      "semantic_label": "maybe",
+      "text": "Mahdollisesti",
+      "category": "maybe"
+    },
+    {
+      "id": "maybe_kai",
+      "phrase_id": "maybe_kai",
+      "label": "kai",
+      "semantic_label": "maybe",
+      "text": "Kai",
+      "category": "maybe"
+    },
+    {
+      "id": "dont_know_en_tieda",
+      "phrase_id": "dont_know_en_tieda",
+      "label": "en_tieda",
+      "semantic_label": "dont_know",
+      "text": "En tiedä",
+      "category": "dont_know"
+    },
+    {
+      "id": "dont_know_en_tiia",
+      "phrase_id": "dont_know_en_tiia",
+      "label": "en_tiia",
+      "semantic_label": "dont_know",
+      "text": "En tiiä",
+      "category": "dont_know"
+    },
+    {
+      "id": "dont_know_emma_tiia",
+      "phrase_id": "dont_know_emma_tiia",
+      "label": "emma_tiia",
+      "semantic_label": "dont_know",
+      "text": "Emmä tiiä",
+      "category": "dont_know"
+    },
+    {
+      "id": "dont_know_emt",
+      "phrase_id": "dont_know_emt",
+      "label": "emt",
+      "semantic_label": "dont_know",
+      "text": "EMT",
+      "category": "dont_know"
+    },
+    {
+      "id": "dont_know_en_osaa_sanoa",
+      "phrase_id": "dont_know_en_osaa_sanoa",
+      "label": "en_osaa_sanoa",
+      "semantic_label": "dont_know",
+      "text": "En osaa sanoa",
+      "category": "dont_know"
+    },
+    {
+      "id": "dont_know_en_osaa_sanoo",
+      "phrase_id": "dont_know_en_osaa_sanoo",
+      "label": "en_osaa_sanoo",
+      "semantic_label": "dont_know",
+      "text": "En osaa sanoo",
+      "category": "dont_know"
+    },
+    {
+      "id": "dont_know_en_ole_varma",
+      "phrase_id": "dont_know_en_ole_varma",
+      "label": "en_ole_varma",
+      "semantic_label": "dont_know",
+      "text": "En ole varma",
+      "category": "dont_know"
+    },
+    {
+      "id": "dont_know_en_oo_varma",
+      "phrase_id": "dont_know_en_oo_varma",
+      "label": "en_oo_varma",
+      "semantic_label": "dont_know",
+      "text": "En oo varma",
+      "category": "dont_know"
+    },
+    {
+      "id": "correct_niin",
+      "phrase_id": "correct_niin",
+      "label": "niin",
+      "semantic_label": "correct",
+      "text": "Niin",
+      "category": "correct"
+    },
+    {
+      "id": "number_yksi",
+      "phrase_id": "number_yksi",
+      "label": "yksi",
+      "semantic_label": "number_1",
+      "text": "Yksi",
+      "category": "number"
+    },
+    {
+      "id": "number_yks",
+      "phrase_id": "number_yks",
+      "label": "yks",
+      "semantic_label": "number_1",
+      "text": "Yks",
+      "category": "number"
+    },
+    {
+      "id": "number_kaksi",
+      "phrase_id": "number_kaksi",
+      "label": "kaksi",
+      "semantic_label": "number_2",
+      "text": "Kaksi",
+      "category": "number"
+    },
+    {
+      "id": "number_kaks",
+      "phrase_id": "number_kaks",
+      "label": "kaks",
+      "semantic_label": "number_2",
+      "text": "Kaks",
+      "category": "number"
+    },
+    {
+      "id": "number_kolme",
+      "phrase_id": "number_kolme",
+      "label": "kolme",
+      "semantic_label": "number_3",
+      "text": "Kolme",
+      "category": "number"
+    },
+    {
+      "id": "number_nelja",
+      "phrase_id": "number_nelja",
+      "label": "nelja",
+      "semantic_label": "number_4",
+      "text": "Neljä",
+      "category": "number"
+    },
+    {
+      "id": "number_viisi",
+      "phrase_id": "number_viisi",
+      "label": "viisi",
+      "semantic_label": "number_5",
+      "text": "Viisi",
+      "category": "number"
+    },
+    {
+      "id": "number_viis",
+      "phrase_id": "number_viis",
+      "label": "viis",
+      "semantic_label": "number_5",
+      "text": "Viis",
+      "category": "number"
+    },
+    {
+      "id": "number_kuusi",
+      "phrase_id": "number_kuusi",
+      "label": "kuusi",
+      "semantic_label": "number_6",
+      "text": "Kuusi",
+      "category": "number"
+    },
+    {
+      "id": "number_kuus",
+      "phrase_id": "number_kuus",
+      "label": "kuus",
+      "semantic_label": "number_6",
+      "text": "Kuus",
+      "category": "number"
+    },
+    {
+      "id": "number_seitseman",
+      "phrase_id": "number_seitseman",
+      "label": "seitseman",
+      "semantic_label": "number_7",
+      "text": "Seitsemän",
+      "category": "number"
+    },
+    {
+      "id": "number_seitteman",
+      "phrase_id": "number_seitteman",
+      "label": "seitteman",
+      "semantic_label": "number_7",
+      "text": "Seittemän",
+      "category": "number"
+    },
+    {
+      "id": "number_kahdeksan",
+      "phrase_id": "number_kahdeksan",
+      "label": "kahdeksan",
+      "semantic_label": "number_8",
+      "text": "Kahdeksan",
+      "category": "number"
+    },
+    {
+      "id": "number_kasi",
+      "phrase_id": "number_kasi",
+      "label": "kasi",
+      "semantic_label": "number_8",
+      "text": "Kasi",
+      "category": "number"
+    },
+    {
+      "id": "number_yhdeksan",
+      "phrase_id": "number_yhdeksan",
+      "label": "yhdeksan",
+      "semantic_label": "number_9",
+      "text": "Yhdeksän",
+      "category": "number"
+    },
+    {
+      "id": "number_ysi",
+      "phrase_id": "number_ysi",
+      "label": "ysi",
+      "semantic_label": "number_9",
+      "text": "Ysi",
+      "category": "number"
+    },
+    {
+      "id": "number_kymmenen",
+      "phrase_id": "number_kymmenen",
+      "label": "kymmenen",
+      "semantic_label": "number_10",
+      "text": "Kymmenen",
+      "category": "number"
+    },
+    {
+      "id": "number_kymppi",
+      "phrase_id": "number_kymppi",
+      "label": "kymppi",
+      "semantic_label": "number_10",
+      "text": "Kymppi",
+      "category": "number"
+    }
   ],
   "control_labels": ["unknown", "silence", "noise"]
 }
