@@ -33,6 +33,7 @@ Optional settings:
 ```env
 DATABUILDER_OUTPUT_DIR=./exports/short-finnish-responses/v2/databuilder
 DATABUILDER_MANIFEST_VERSION=20260501001
+DATASET_VALIDATION_FILTER=validated
 ```
 
 Generated databuilder outputs contain audio and should not be committed.
@@ -40,6 +41,12 @@ Generated databuilder outputs contain audio and should not be committed.
 ## Storage Behavior
 
 The bridge filters rows by the active `STORAGE` value, matching `scripts/aina/exportDataset.js`.
+
+It also filters rows by validation status before writing audio or JSON:
+
+- `validated`: export only validated recordings. This is the default.
+- `not_rejected`: export pending, needs_review, and validated recordings; exclude rejected.
+- `all`: ignore validation status for export eligibility.
 
 It also filters out recordings that are not classifier-ready. A row is exported only when `recording.metadata.processed_audio` is exactly:
 
@@ -77,6 +84,12 @@ Each `<sample_id>.json` sidecar is root-level:
   "normalized_label": "kylla",
   "literal_transcript": null,
   "label_source": "prompt_assumed",
+  "validation": {
+    "status": "validated",
+    "validated_at": "2026-05-31T10:00:00.000Z",
+    "notes": null
+  },
+  "original": true,
   "language": "fi",
   "category": "yes",
   "augmentation_strategy": null,

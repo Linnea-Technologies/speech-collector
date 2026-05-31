@@ -13,6 +13,7 @@ The frontend must not append directly to a shared `samples.jsonl` file. Public v
 - `recordings.metadata` stores recording-level v1 metadata without a DB schema change.
 - `participant_sessions.metadata` stores session-level v1 metadata without a DB schema change.
 - Each upload inserts a new `recordings` row. Repeat recordings for the same `(session_id, task_id)` are separate samples.
+- Admin validation stores review state in `recordings.metadata.validation` and writes a JSON sidecar beside the WAV file in storage.
 - Backend safety limits are authoritative. The frontend timer improves UX, but the backend rejects files that are too large or too long.
 
 ## Session Metadata
@@ -67,6 +68,11 @@ Required v1 shape:
   "normalized_label": "kylla",
   "literal_transcript": null,
   "label_source": "prompt_assumed",
+  "validation": {
+    "status": "pending",
+    "validated_at": null,
+    "notes": null
+  },
   "language": "fi",
   "category": "yes",
   "technical": {
@@ -101,6 +107,21 @@ Allowed `label_source` values:
 - `reviewed`: reserved for a later manual review workflow.
 
 The classifier should train on `normalized_label`, not `literal_transcript`.
+
+## Admin Validation Metadata
+
+The internal admin UI at `/#/admin` can edit only safe review fields:
+
+- `literal_transcript`
+- `label_source`
+- `validation.status`
+- `validation.notes`
+
+Allowed statuses are `pending`, `validated`, `needs_review`, and `rejected`. Missing legacy validation metadata is treated as `pending`.
+
+Trusted task-derived fields remain read-only in v1, including `phrase_id`, `semantic_label`, `normalized_label`, `category`, `language`, processed-audio metadata, and storage keys.
+
+Validation sidecars are written beside the WAV file by replacing `.wav` with `.json`. They contain complete dataset-ready metadata and do not include `validated_by`, usernames, secrets, or raw `.env` values.
 
 ## Category Progress Metadata
 
@@ -155,6 +176,8 @@ Each sample row combines:
 - task metadata
 - storage information
 
+Exports first apply `DATASET_VALIDATION_FILTER`, defaulting to `validated`. `not_rejected` excludes rejected samples only, and `all` keeps all otherwise eligible recordings.
+
 Example exported row:
 
 ```json
@@ -169,6 +192,12 @@ Example exported row:
   "transcript": "Kyllä",
   "literal_transcript": null,
   "label_source": "prompt_assumed",
+  "validation": {
+    "status": "validated",
+    "validated_at": "2026-05-31T10:00:00.000Z",
+    "notes": null
+  },
+  "original": true,
   "language": "fi",
   "duration_sec": 0.82,
   "split": null,
@@ -201,6 +230,11 @@ Example exported row:
       "sample_rate_hz": 16000,
       "channel_count": 1,
       "encoding": "pcm_s16le"
+    },
+    "validation": {
+      "status": "validated",
+      "validated_at": "2026-05-31T10:00:00.000Z",
+      "notes": null
     },
     "collection": {
       "topic_id": "short_finnish_responses_v2_0001",
@@ -317,6 +351,6 @@ Old recordings collected before the processed-audio fix may not contain `process
 - Use `prompted_word`/`transcript` for display and review.
 - Treat `literal_transcript` as optional metadata, not the default target label.
 - `sample_id` is the UUID from `recordings.id`.
-- Export filters recordings by the active `STORAGE` setting so one manifest does not mix local and S3 audio roots.
+- Export filters recordings by validation status and by the active `STORAGE` setting so one manifest does not mix local and S3 audio roots.
 - Use `scripts/aina/exportDataset.js` for the collector-native `dataset.json + samples.jsonl` export.
 - Use `scripts/aina/exportDatabuilderDataset.js` when the current audio-classifier databuilder needs `manifest.json + <sample_id>.wav + <sample_id>.json`.

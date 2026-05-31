@@ -102,6 +102,11 @@ function makeRow(overrides = {}) {
         channel_count: 1,
         encoding: 'pcm_s16le',
       },
+      validation: {
+        status: 'validated',
+        validated_at: '2026-04-23T10:00:00.000Z',
+        notes: 'checked',
+      },
       storage: {
         object_key: 'session-123/short_finnish_responses_v1_0001_kylla.wav',
         bucket_name: null,
@@ -133,6 +138,12 @@ test('buildDatabuilderSidecar creates root-level databuilder fields', () => {
   assert.equal(sidecar.label_source, 'user_confirmed');
   assert.equal(sidecar.language, 'fi');
   assert.equal(sidecar.category, 'affirmative');
+  assert.deepEqual(sidecar.validation, {
+    status: 'validated',
+    validated_at: '2026-04-23T10:00:00.000Z',
+    notes: 'checked',
+  });
+  assert.equal(sidecar.original, true);
   assert.equal(sidecar.augmentation_strategy, null);
   assert.deepEqual(sidecar.augmentations, []);
   assert.match(sidecar.device_id, /^dev_[a-f0-9]{12}$/);
@@ -150,6 +161,10 @@ test('buildDatabuilderSidecar creates root-level databuilder fields', () => {
   assert.equal(sidecar.collection.phrase_id, 'yes_kylla');
   assert.equal(sidecar.collection.semantic_label, 'yes');
   assert.equal(sidecar.storage.storage_key, 'session-123/short_finnish_responses_v1_0001_kylla.wav');
+  assert.equal(
+    sidecar.storage.metadata_object_key,
+    'session-123/short_finnish_responses_v1_0001_kylla.json'
+  );
   assert.equal(Object.hasOwn(sidecar, 'metadata'), false);
 });
 
@@ -158,6 +173,7 @@ test('required sidecar keys always exist for original recordings', () => {
     makeRow({
       recording_metadata: {
         normalized_label: 'kylla',
+        validation: { status: 'validated' },
       },
       session_metadata: {},
     })
@@ -169,6 +185,10 @@ test('required sidecar keys always exist for original recordings', () => {
   assert.equal(sidecar.augmentation_strategy, null);
   assert.equal(Object.hasOwn(sidecar, 'augmentations'), true);
   assert.deepEqual(sidecar.augmentations, []);
+  assert.equal(Object.hasOwn(sidecar, 'validation'), true);
+  assert.equal(sidecar.validation.status, 'validated');
+  assert.equal(Object.hasOwn(sidecar, 'original'), true);
+  assert.equal(sidecar.original, true);
   assert.equal(Object.hasOwn(sidecar, 'processed_audio'), true);
   assert.equal(sidecar.processed_audio, null);
   assert.equal(Object.hasOwn(sidecar, 'demographics'), true);
@@ -274,6 +294,7 @@ test('aws-s3 export downloads the metadata object key as sample_id.wav', async (
         channel_count: 1,
         encoding: 'pcm_s16le',
       },
+      validation: { status: 'validated' },
       storage: {
         object_key: 'short-finnish-responses/v1/audio/session-123/short_finnish_responses_v1_0001_kylla.wav',
         bucket_name: 'voice-training',
@@ -327,6 +348,66 @@ test('valid processed_audio rows are exported and summarized', async () => {
   assert.equal(result.summary.skippedStorageMismatchCount, 0);
 });
 
+test('databuilder export applies validation filter before processed audio filtering', async () => {
+  const recordingsRoot = makeTempDir();
+  const outputDir = makeTempDir();
+  const validatedRow = makeRow({
+    recording_id: '11111111-1111-4111-8111-111111111111',
+  });
+  const pendingRow = makeRow({
+    recording_id: '22222222-2222-4222-8222-222222222222',
+    recording_metadata: {
+      ...makeRow().recording_metadata,
+      validation: { status: 'pending' },
+    },
+  });
+  writeLocalAudio(recordingsRoot, validatedRow);
+
+  const result = await exportDatabuilderRows([validatedRow, pendingRow], {
+    outputDir,
+    recordingsRoot,
+    activeStorageType: 'local',
+    manifestVersion: 'test-version',
+    log: false,
+  });
+
+  assert.deepEqual(Object.keys(result.manifest.samples), [validatedRow.recording_id]);
+  assert.equal(result.summary.skippedValidationCount, 1);
+  assert.equal(existsSync(path.join(outputDir, `${pendingRow.recording_id}.json`)), false);
+});
+
+test('databuilder not_rejected filter excludes rejected rows only', async () => {
+  const recordingsRoot = makeTempDir();
+  const outputDir = makeTempDir();
+  const pendingRow = makeRow({
+    recording_id: '11111111-1111-4111-8111-111111111111',
+    recording_metadata: {
+      ...makeRow().recording_metadata,
+      validation: { status: 'pending' },
+    },
+  });
+  const rejectedRow = makeRow({
+    recording_id: '22222222-2222-4222-8222-222222222222',
+    recording_metadata: {
+      ...makeRow().recording_metadata,
+      validation: { status: 'rejected' },
+    },
+  });
+  writeLocalAudio(recordingsRoot, pendingRow);
+
+  const result = await exportDatabuilderRows([pendingRow, rejectedRow], {
+    outputDir,
+    recordingsRoot,
+    activeStorageType: 'local',
+    validationFilter: 'not_rejected',
+    manifestVersion: 'test-version',
+    log: false,
+  });
+
+  assert.deepEqual(Object.keys(result.manifest.samples), [pendingRow.recording_id]);
+  assert.equal(result.summary.skippedValidationCount, 1);
+});
+
 test('rows with null or missing processed_audio are skipped by default', async () => {
   const recordingsRoot = makeTempDir();
   const outputDir = makeTempDir();
@@ -338,12 +419,14 @@ test('rows with null or missing processed_audio are skipped by default', async (
     recording_metadata: {
       normalized_label: 'kylla',
       processed_audio: null,
+      validation: { status: 'validated' },
     },
   });
   const missingProcessedAudioRow = makeRow({
     recording_id: '33333333-3333-4333-8333-333333333333',
     recording_metadata: {
       normalized_label: 'kylla',
+      validation: { status: 'validated' },
     },
   });
   writeLocalAudio(recordingsRoot, validRow);
@@ -380,6 +463,7 @@ test('rows with wrong processed_audio values are skipped by default', async () =
         channel_count: 1,
         encoding: 'pcm_s16le',
       },
+      validation: { status: 'validated' },
     },
   });
   const wrongChannelRow = makeRow({
@@ -391,6 +475,7 @@ test('rows with wrong processed_audio values are skipped by default', async () =
         channel_count: 2,
         encoding: 'pcm_s16le',
       },
+      validation: { status: 'validated' },
     },
   });
   const wrongEncodingRow = makeRow({
@@ -402,6 +487,7 @@ test('rows with wrong processed_audio values are skipped by default', async () =
         channel_count: 1,
         encoding: 'opus',
       },
+      validation: { status: 'validated' },
     },
   });
   writeLocalAudio(recordingsRoot, validRow);
@@ -427,6 +513,7 @@ test('databuilder export fails clearly when no classifier-ready rows remain', as
     recording_metadata: {
       normalized_label: 'kylla',
       processed_audio: null,
+      validation: { status: 'validated' },
     },
   });
 

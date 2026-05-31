@@ -7,6 +7,7 @@ import { fileURLToPath } from 'url';
 
 import { TaskProvider } from './taskProvider.js';
 import { FileStorage, RecordingTooLongError } from './fileStorage.js';
+import { createAdminRouter, createDefaultAdminService } from './admin.js';
 import {
   getDbConnectionString,
   getMaxUploadBytes,
@@ -209,15 +210,24 @@ export function createApp(options = {}) {
   const provider = options.provider || createDefaultProvider();
   const fileStorage = options.fileStorage || createDefaultFileStorage();
   const upload = options.upload || createDefaultUpload();
+  const adminService = options.adminService || createDefaultAdminService(provider, fileStorage);
   const turnstileSecretKey =
     options.turnstileSecretKey === undefined ? getTurnstileSecretKey() : options.turnstileSecretKey;
   const fetchImpl = options.fetchImpl || fetch;
 
   const app = express();
 
-  app.use(cors({ origin: process.env.APP_URL }));
+  app.use(cors({ origin: process.env.APP_URL, credentials: true }));
   app.use(express.json());
   app.use(express.urlencoded({ extended: true }));
+
+  createAdminRouter({
+    adminService,
+    passwordHash: options.adminPasswordHash,
+    sessionSecret: options.adminSessionSecret,
+    sessionTtlHours: options.adminSessionTtlHours,
+    disableThrottle: options.disableAdminThrottle,
+  }).routes(app);
 
   app.post('/api/start-session', async (req, res) => {
     try {
