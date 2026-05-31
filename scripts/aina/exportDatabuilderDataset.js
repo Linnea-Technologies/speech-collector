@@ -11,9 +11,11 @@ import {
   expireStaleSessions,
   fetchCompletedRows,
   filterRowsForActiveStorage,
+  filterRowsForValidation,
   getActiveStorageType,
   getDurationSec,
   getPhraseId,
+  getRecordingValidationStatus,
   getSemanticLabel,
   pseudonymizeDeviceId,
   pseudonymizeSpeaker,
@@ -23,7 +25,7 @@ import {
   getSoundRecordingsRoot,
   normalizeStorageKey,
 } from '../../backend/src/config.js';
-import { FileStorage } from '../../backend/src/fileStorage.js';
+import { buildMetadataSidecarStorageKey, FileStorage } from '../../backend/src/fileStorage.js';
 
 const DEFAULT_DATABUILDER_OUTPUT_DIR = './exports/short-finnish-responses/v2/databuilder';
 const DEFAULT_DATABUILDER_MANIFEST_VERSION = '20260501001';
@@ -138,11 +140,13 @@ export function getDatabuilderStorageInfo(row) {
   const storageKey = normalizeStorageObjectKey(row.storage_key);
   const objectKey =
     storageType === 'local' ? storageKey : inferRemoteObjectKey(row, recordingMetadata);
+  const metadataObjectKey = objectKey ? buildMetadataSidecarStorageKey(objectKey) : null;
 
   return {
     storage_type: storageType,
     storage_key: storageKey,
     object_key: objectKey || null,
+    metadata_object_key: metadataObjectKey,
     bucket_name: getBucketName(row, recordingMetadata),
   };
 }
@@ -205,6 +209,7 @@ export function buildDatabuilderSidecar(row) {
   const phraseId = getPhraseId(row);
   const semanticLabel = getSemanticLabel(row);
   const submittedAt = normalizeTimestamp(row.submitted_at || recordingMetadata.timestamp);
+  const validation = isPlainObject(recordingMetadata.validation) ? recordingMetadata.validation : {};
 
   if (!normalizedLabel) {
     throw new Error(`Recording ${sampleId} is missing normalized_label.`);
@@ -221,6 +226,12 @@ export function buildDatabuilderSidecar(row) {
     label_source: recordingMetadata.label_source || 'prompt_assumed',
     language,
     category: category || null,
+    validation: {
+      status: getRecordingValidationStatus(row),
+      validated_at: normalizeTimestamp(validation.validated_at),
+      notes: normalizeOptionalString(validation.notes),
+    },
+    original: true,
     augmentation_strategy: null,
     augmentations: [],
     device_id: pseudonymizeDeviceId(row),
@@ -355,6 +366,7 @@ export function buildDatabuilderExportSummary(summary) {
     'Databuilder export summary:',
     `- considered recordings: ${summary.consideredRowCount}`,
     `- exported recordings: ${summary.exportedRowCount}`,
+    `- skipped validation filter: ${summary.skippedValidationCount || 0}`,
     `- skipped legacy/missing processed_audio: ${summary.skippedLegacyProcessedAudioCount}`,
     `- skipped storage mismatch: ${summary.skippedStorageMismatchCount}`,
     `- output directory: ${summary.outputDir}`,
@@ -365,14 +377,16 @@ export async function exportDatabuilderRows(rows, options = {}) {
   const outputDir = path.resolve(options.outputDir || getDatabuilderOutputDir());
   ensureDirectory(outputDir);
 
+  const validationFilter = filterRowsForValidation(rows, options.validationFilter);
   const storageFilter = filterRowsForActiveStorage(
-    rows,
+    validationFilter.exportRows,
     options.activeStorageType || getActiveStorageType()
   );
   const classifierReadyFilter = filterRowsForClassifierReadyAudio(storageFilter.exportRows);
   const summary = {
     consideredRowCount: rows.length,
     exportedRowCount: classifierReadyFilter.exportRows.length,
+    skippedValidationCount: validationFilter.skippedRowCount,
     skippedLegacyProcessedAudioCount: classifierReadyFilter.skippedRowCount,
     skippedStorageMismatchCount: storageFilter.skippedRowCount,
     outputDir,
@@ -415,6 +429,7 @@ export async function exportDatabuilderRows(rows, options = {}) {
     manifest,
     manifestPath,
     samples: writtenSamples,
+    validationFilter,
     storageFilter,
     classifierReadyFilter,
     summary,

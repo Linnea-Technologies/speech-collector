@@ -12,6 +12,9 @@ const DEFAULT_MAX_UPLOAD_BYTES = 2_000_000;
 const DEFAULT_MAX_RECORDING_DURATION_TOLERANCE_SECONDS = 1;
 const DEFAULT_DATASET_ID = 'short_finnish_responses';
 const DEFAULT_DATASET_VERSION = 'v2';
+const DEFAULT_ADMIN_SESSION_TTL_HOURS = 12;
+const DEFAULT_DATASET_VALIDATION_FILTER = 'validated';
+const DATASET_VALIDATION_FILTERS = new Set(['validated', 'not_rejected', 'all']);
 
 function normalizePosixPrefix(prefix) {
   return (prefix || '').replace(/\\/g, '/').replace(/^\/+|\/+$/g, '');
@@ -71,6 +74,23 @@ export function getMaxAllowedRecordingDurationSeconds() {
 
 export function getTurnstileSecretKey() {
   return (process.env.TURNSTILE_SECRET_KEY || '').trim();
+}
+
+export function getAdminPasswordHash() {
+  return (process.env.ADMIN_PASSWORD_HASH || '').trim();
+}
+
+export function getAdminSessionSecret() {
+  return (process.env.ADMIN_SESSION_SECRET || '').trim();
+}
+
+export function getAdminSessionTtlHours() {
+  return getPositiveIntegerEnv('ADMIN_SESSION_TTL_HOURS', DEFAULT_ADMIN_SESSION_TTL_HOURS);
+}
+
+export function getDatasetValidationFilter() {
+  const value = (process.env.DATASET_VALIDATION_FILTER || DEFAULT_DATASET_VALIDATION_FILTER).trim();
+  return DATASET_VALIDATION_FILTERS.has(value) ? value : DEFAULT_DATASET_VALIDATION_FILTER;
 }
 
 export function getDatasetId() {

@@ -6,6 +6,7 @@ import SessionIntro from "../components/SessionIntro";
 import SessionEndScreen from "../components/SessionEndScreen";
 import SoundRecorder from "../components/SoundRecorder";
 import TurnstileGate from "../components/TurnstileGate";
+import AdminValidationApp from "../components/AdminValidation";
 import {
   getConsentDeclineMessage,
   hasDeclinedConsent,
@@ -190,6 +191,7 @@ function getPhraseStatusClassName(phrase: CategoryPhraseState) {
 }
 
 function App() {
+  const [hashRoute, setHashRoute] = useState<string>(() => window.location.hash);
   const {
     sessionToken,
     participantMetadata,
@@ -212,6 +214,12 @@ function App() {
   const apiUrl = import.meta.env.VITE_API_URL;
   const appName = getVolunteerAppTitle(import.meta.env.VITE_APP_TITLE);
   const turnstileSiteKey = import.meta.env.VITE_TURNSTILE_SITE_KEY || "";
+
+  useEffect(() => {
+    const handleHashChange = () => setHashRoute(window.location.hash);
+    window.addEventListener("hashchange", handleHashChange);
+    return () => window.removeEventListener("hashchange", handleHashChange);
+  }, []);
 
   const metadataComplete = useMemo(
     () => isMetadataComplete(participantMetadata),
@@ -468,6 +476,10 @@ function App() {
   );
 
   useEffect(() => {
+    if (hashRoute.startsWith("#/admin")) {
+      return;
+    }
+
     if (hasBootstrapped.current) {
       return;
     }
@@ -479,7 +491,7 @@ function App() {
     }
 
     void startOrResumeSession(sessionToken, turnstileToken);
-  }, [sessionToken, startOrResumeSession, turnstileSiteKey, turnstileToken]);
+  }, [hashRoute, sessionToken, startOrResumeSession, turnstileSiteKey, turnstileToken]);
 
   const handleTurnstileVerified = useCallback(
     async (token: string) => {
@@ -622,6 +634,10 @@ function App() {
       syncSession,
     ]
   );
+
+  if (hashRoute.startsWith("#/admin")) {
+    return <AdminValidationApp />;
+  }
 
   if (phase === "bootstrapping") {
     return (
