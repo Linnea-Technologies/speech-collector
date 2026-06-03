@@ -5,6 +5,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 
 import {
+  buildConsentGovernanceMetadata,
   configValue,
   createDbClient,
   ensureDirectory,
@@ -256,6 +257,7 @@ export function buildDatabuilderSidecar(row) {
       category: category || null,
       phrase_id: phraseId,
       semantic_label: semanticLabel,
+      consent: buildConsentGovernanceMetadata(sessionMetadata),
     },
     storage: getDatabuilderStorageInfo(row),
   };

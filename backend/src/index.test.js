@@ -11,14 +11,26 @@ import {
 } from './index.js';
 import { RecordingTooLongError } from './fileStorage.js';
 
+const validConsentMetadata = {
+  schema_version: 'v1',
+  device_id: 'browser-device-id',
+  consent_response: 'yes',
+  consent_version: '1.0',
+  privacy_notice_version: '1.0',
+  consent_accepted_at: '2026-06-03T12:00:00.000Z',
+  age_confirmed_18_or_over: true,
+  technical: {},
+};
+
 function createProvider(overrides = {}) {
   return {
     startSessionCalls: 0,
     getCategoryStateCalls: 0,
     getUploadTargetCalls: 0,
     submitRecordingCalls: 0,
-    async startSession() {
+    async startSession(_sessionToken, metadata) {
       this.startSessionCalls += 1;
+      this.lastStartSessionMetadata = metadata;
       return { success: true, session: { sessionToken: 'session-token' } };
     },
     async getUploadTarget() {
@@ -246,6 +258,51 @@ test('Turnstile failure rejects session start before creating a session', async 
     assert.equal(response.status, 400);
     assert.equal(body.code, 'turnstile_failed');
     assert.equal(provider.startSessionCalls, 0);
+  });
+});
+
+test('start-session rejects missing consent metadata before provider start', async () => {
+  const provider = createProvider();
+  const app = createApp({
+    provider,
+    fileStorage: createFileStorage(),
+    turnstileSecretKey: '',
+  });
+
+  await withServer(app, async (baseUrl) => {
+    const response = await fetch(`${baseUrl}/api/start-session`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({}),
+    });
+    const body = await response.json();
+
+    assert.equal(response.status, 400);
+    assert.equal(body.code, 'consent_required');
+    assert.equal(provider.startSessionCalls, 0);
+  });
+});
+
+test('start-session passes valid consent metadata to provider', async () => {
+  const provider = createProvider();
+  const app = createApp({
+    provider,
+    fileStorage: createFileStorage(),
+    turnstileSecretKey: '',
+  });
+
+  await withServer(app, async (baseUrl) => {
+    const response = await fetch(`${baseUrl}/api/start-session`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ metadata: validConsentMetadata }),
+    });
+    const body = await response.json();
+
+    assert.equal(response.status, 200);
+    assert.equal(body.success, true);
+    assert.equal(provider.startSessionCalls, 1);
+    assert.deepEqual(provider.lastStartSessionMetadata, validConsentMetadata);
   });
 });
 

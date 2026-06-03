@@ -1,16 +1,23 @@
-import { useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useContext, useEffect, useMemo, useState } from "react";
+import type { ReactNode } from "react";
 
 import SessionContext from "../contexts/SessionProvider";
+import ConsentGate from "../components/ConsentGate";
 import InfoForm from "../components/InfoForm";
+import { ParticipantInfoPage, PrivacyPolicyPage } from "../components/PolicyPages";
 import SessionIntro from "../components/SessionIntro";
 import SessionEndScreen from "../components/SessionEndScreen";
 import SoundRecorder from "../components/SoundRecorder";
 import TurnstileGate from "../components/TurnstileGate";
 import AdminValidationApp from "../components/AdminValidation";
 import {
+  buildConsentSessionMetadata,
+  clearStoredConsentSessionMetadata,
   getConsentDeclineMessage,
+  getStoredConsentSessionMetadata,
   hasDeclinedConsent,
   isMetadataComplete,
+  storeConsentSessionMetadata,
 } from "../utils/sessionMetadata";
 import type {
   CategoryPhraseState,
@@ -23,6 +30,7 @@ import "bootstrap/dist/css/bootstrap.min.css";
 import "./App.css";
 
 type Phase =
+  | "consent"
   | "bootstrapping"
   | "verification"
   | "intro"
@@ -49,6 +57,10 @@ const CATEGORY_HELPER_TEXT: Record<string, string> = {
   correct: "Record short confirmation phrases.",
   number: "Record number words in a clear, natural voice.",
 };
+
+function VolunteerShell({ children }: { children: ReactNode }) {
+  return <main className="app-shell">{children}</main>;
+}
 
 function getVolunteerAppTitle(value: unknown) {
   const title = typeof value === "string" ? value.replace(/\bAINA\s*/gi, "").trim() : "";
@@ -201,7 +213,7 @@ function App() {
     setProgress,
   } = useContext(SessionContext);
 
-  const [phase, setPhase] = useState<Phase>("bootstrapping");
+  const [phase, setPhase] = useState<Phase>("consent");
   const [metadataMode, setMetadataMode] = useState<MetadataMode>("required");
   const [message, setMessage] = useState<string>("");
   const [categoryState, setCategoryState] = useState<CategoryStateResponse | null>(null);
@@ -209,7 +221,9 @@ function App() {
   const [selectedPhraseId, setSelectedPhraseId] = useState<string | null>(null);
   const [categoryLoading, setCategoryLoading] = useState<boolean>(false);
   const [turnstileToken, setTurnstileToken] = useState<string | null>(null);
-  const hasBootstrapped = useRef(false);
+  const [pendingConsentMetadata, setPendingConsentMetadata] = useState<Record<string, unknown> | null>(
+    null
+  );
 
   const apiUrl = import.meta.env.VITE_API_URL;
   const appName = getVolunteerAppTitle(import.meta.env.VITE_APP_TITLE);
@@ -401,7 +415,11 @@ function App() {
   );
 
   const startOrResumeSession = useCallback(
-    async (tokenOverride?: string | null, turnstileTokenOverride?: string | null) => {
+    async (
+      tokenOverride?: string | null,
+      turnstileTokenOverride?: string | null,
+      consentMetadataOverride?: Record<string, unknown> | null
+    ) => {
       setPhase("bootstrapping");
       setMessage("");
       setCurrentTask(null);
@@ -411,6 +429,7 @@ function App() {
 
       try {
         const activeTurnstileToken = turnstileTokenOverride ?? turnstileToken;
+        const activeConsentMetadata = consentMetadataOverride ?? pendingConsentMetadata;
         const response = await fetch(`${apiUrl}/api/start-session`, {
           method: "POST",
           headers: {
@@ -419,6 +438,7 @@ function App() {
           body: JSON.stringify({
             sessionToken: tokenOverride === undefined ? sessionToken : tokenOverride,
             turnstileToken: activeTurnstileToken || undefined,
+            metadata: activeConsentMetadata || undefined,
           }),
         });
 
@@ -433,6 +453,14 @@ function App() {
 
           if (data.sessionStatus === "unavailable" || data.code === "no_topics") {
             moveToTerminalPhase("unavailable", data.message || "No prompt sets are available right now.");
+            return;
+          }
+
+          if (data.code === "consent_required") {
+            clearStoredConsentSessionMetadata();
+            setPendingConsentMetadata(null);
+            setPhase("consent");
+            setMessage(data.message || "Consent is required before a session can be started.");
             return;
           }
 
@@ -451,7 +479,7 @@ function App() {
 
         if (!isMetadataComplete(data.session?.metadata)) {
           setMetadataMode("required");
-          setPhase("intro");
+          setPhase("metadata");
           return;
         }
 
@@ -468,6 +496,7 @@ function App() {
       apiUrl,
       closeSession,
       moveToTerminalPhase,
+      pendingConsentMetadata,
       sessionToken,
       setCurrentTask,
       syncSession,
@@ -476,30 +505,65 @@ function App() {
   );
 
   useEffect(() => {
-    if (hashRoute.startsWith("#/admin")) {
+    if (
+      hashRoute.startsWith("#/admin") ||
+      hashRoute.startsWith("#/privacy") ||
+      hashRoute.startsWith("#/participant-info") ||
+      phase !== "consent"
+    ) {
       return;
     }
 
-    if (hasBootstrapped.current) {
+    const storedConsentMetadata = getStoredConsentSessionMetadata();
+    if (!storedConsentMetadata) {
       return;
     }
 
-    hasBootstrapped.current = true;
+    setPendingConsentMetadata(storedConsentMetadata);
+    setMessage("");
+
     if (turnstileSiteKey && !turnstileToken) {
       setPhase("verification");
       return;
     }
 
-    void startOrResumeSession(sessionToken, turnstileToken);
-  }, [hashRoute, sessionToken, startOrResumeSession, turnstileSiteKey, turnstileToken]);
+    void startOrResumeSession(sessionToken, turnstileToken, storedConsentMetadata);
+  }, [hashRoute, phase, sessionToken, startOrResumeSession, turnstileSiteKey, turnstileToken]);
 
   const handleTurnstileVerified = useCallback(
     async (token: string) => {
       setTurnstileToken(token);
-      await startOrResumeSession(sessionToken, token);
+      const consentMetadata =
+        pendingConsentMetadata || getStoredConsentSessionMetadata() || buildConsentSessionMetadata();
+      setPendingConsentMetadata(consentMetadata);
+      await startOrResumeSession(sessionToken, token, consentMetadata);
     },
-    [sessionToken, startOrResumeSession]
+    [pendingConsentMetadata, sessionToken, startOrResumeSession]
   );
+
+  const handleConsentAccepted = useCallback(async () => {
+    const consentMetadata = buildConsentSessionMetadata();
+    storeConsentSessionMetadata(consentMetadata);
+    setPendingConsentMetadata(consentMetadata);
+    setMessage("");
+
+    if (turnstileSiteKey && !turnstileToken) {
+      setPhase("verification");
+      return;
+    }
+
+    await startOrResumeSession(sessionToken, turnstileToken, consentMetadata);
+  }, [sessionToken, startOrResumeSession, turnstileSiteKey, turnstileToken]);
+
+  const handleConsentDeclined = useCallback(() => {
+    clearStoredConsentSessionMetadata();
+    setPendingConsentMetadata(null);
+    clearSession();
+    setMessage(
+      "Et voi jatkaa osallistumista ilman suostumusta. Voit sulkea tämän sivun. You cannot continue without consent. You may close this page."
+    );
+    setPhase("declined");
+  }, [clearSession]);
 
   const handleMetadataSaved = useCallback(
     async (session: SessionState) => {
@@ -540,15 +604,11 @@ function App() {
     setSelectedCategoryId(null);
     setSelectedPhraseId(null);
     setMetadataMode("required");
+    setPendingConsentMetadata(null);
+    setTurnstileToken(null);
     setMessage("");
-    if (turnstileSiteKey) {
-      setTurnstileToken(null);
-      setPhase("verification");
-      return;
-    }
-
-    await startOrResumeSession(null);
-  }, [clearSession, startOrResumeSession, turnstileSiteKey]);
+    setPhase("consent");
+  }, [clearSession]);
 
   const handleSelectCategory = useCallback((category: CategoryStateCategory) => {
     if (!category.unlocked) {
@@ -639,22 +699,50 @@ function App() {
     return <AdminValidationApp />;
   }
 
+  if (hashRoute.startsWith("#/privacy")) {
+    return (
+      <VolunteerShell>
+        <PrivacyPolicyPage />
+      </VolunteerShell>
+    );
+  }
+
+  if (hashRoute.startsWith("#/participant-info")) {
+    return (
+      <VolunteerShell>
+        <ParticipantInfoPage />
+      </VolunteerShell>
+    );
+  }
+
+  if (phase === "consent") {
+    return (
+      <VolunteerShell>
+        <ConsentGate
+          message={message}
+          onAccepted={handleConsentAccepted}
+          onDeclined={handleConsentDeclined}
+        />
+      </VolunteerShell>
+    );
+  }
+
   if (phase === "bootstrapping") {
     return (
-      <main className="app-shell">
+      <VolunteerShell>
         <section className="app-panel app-panel--narrow">
           <span className="app-eyebrow">Speech Collector</span>
           <h1 className="app-title">Preparing your session</h1>
           <p className="app-copy">Connecting to the next available prompt set.</p>
         </section>
-      </main>
+      </VolunteerShell>
     );
   }
 
   if (phase === "verification") {
     if (!turnstileSiteKey) {
       return (
-        <main className="app-shell">
+        <VolunteerShell>
           <section className="app-panel app-panel--narrow">
             <span className="app-eyebrow">Speech Collector</span>
             <h1 className="app-title">Verification unavailable</h1>
@@ -662,24 +750,24 @@ function App() {
               Human verification is required, but the Turnstile site key is not configured.
             </p>
           </section>
-        </main>
+        </VolunteerShell>
       );
     }
 
     return (
-      <main className="app-shell">
+      <VolunteerShell>
         <TurnstileGate
           siteKey={turnstileSiteKey}
           message={message}
           onVerified={handleTurnstileVerified}
         />
-      </main>
+      </VolunteerShell>
     );
   }
 
   if (phase === "intro") {
     return (
-      <main className="app-shell">
+      <VolunteerShell>
         <SessionIntro
           title="Short Finnish response collection"
           summary="This session records short spoken answers for phone-quality speech classification."
@@ -691,31 +779,31 @@ function App() {
           actionLabel="Continue"
           onContinue={() => setPhase("metadata")}
         />
-      </main>
+      </VolunteerShell>
     );
   }
 
   if (phase === "metadata") {
     return (
-      <main className="app-shell">
+      <VolunteerShell>
         <InfoForm
           message={
             message ||
             (metadataMode === "required"
-              ? "Tell us a little about the recording conditions and confirm consent before you begin."
+              ? "Tell us a little about the recording conditions before you begin."
               : "Update the session details if something changed.")
           }
           canCancel={metadataMode === "edit" && metadataComplete}
           onCancel={() => setPhase(categoryState ? "categoryRecording" : "categoryIntro")}
           onSaved={handleMetadataSaved}
         />
-      </main>
+      </VolunteerShell>
     );
   }
 
   if (phase === "categoryIntro") {
     return (
-      <main className="app-shell">
+      <VolunteerShell>
         <section className="app-panel app-panel--narrow">
           <span className="app-eyebrow">{appName}</span>
           <h1 className="app-title">Record Finnish short responses</h1>
@@ -748,77 +836,77 @@ function App() {
           </div>
           {message && <p className="app-inline-message app-inline-message--error">{message}</p>}
         </section>
-      </main>
+      </VolunteerShell>
     );
   }
 
   if (phase === "completed") {
     return (
-      <main className="app-shell">
+      <VolunteerShell>
         <SessionEndScreen
           title="Session complete"
           message={message || "Thank you. Your recordings were saved."}
           actionLabel="Start a new session"
           onRestart={handleRestart}
         />
-      </main>
+      </VolunteerShell>
     );
   }
 
   if (phase === "abandoned") {
     return (
-      <main className="app-shell">
+      <VolunteerShell>
         <SessionEndScreen
           title="Session closed"
           message={message || "Your submitted recordings were saved."}
           actionLabel="Start a new session"
           onRestart={handleRestart}
         />
-      </main>
+      </VolunteerShell>
     );
   }
 
   if (phase === "declined") {
     return (
-      <main className="app-shell">
+      <VolunteerShell>
         <SessionEndScreen
           title="Thanks for your response"
           message={message || "This session has been closed and no prompts were shown."}
           actionLabel="Start over"
           onRestart={handleRestart}
         />
-      </main>
+      </VolunteerShell>
     );
   }
 
   if (phase === "unavailable") {
     return (
-      <main className="app-shell">
+      <VolunteerShell>
         <SessionEndScreen
           title="No prompts available"
           message={message || "There are no prompt sets available right now."}
           actionLabel="Try again"
           onRestart={handleRestart}
         />
-      </main>
+      </VolunteerShell>
     );
   }
 
   if (phase === "error") {
     return (
-      <main className="app-shell">
+      <VolunteerShell>
         <SessionEndScreen
           title="Something went wrong"
           message={message || "The session could not continue."}
           actionLabel="Start over"
           onRestart={handleRestart}
         />
-      </main>
+      </VolunteerShell>
     );
   }
 
   return (
-    <main className="app-shell">
+    <VolunteerShell>
       <section className="app-panel app-panel--wide">
         <header className="app-header">
           <div className="app-header__content">
@@ -1004,7 +1092,7 @@ function App() {
           <p className="app-inline-message">{message}</p>
         )}
       </section>
-    </main>
+    </VolunteerShell>
   );
 }
 

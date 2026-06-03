@@ -13,6 +13,10 @@ const validV1SessionMetadata = {
   schema_version: 'v1',
   device_id: 'browser-device-id',
   consent_response: 'yes',
+  consent_version: '1.0',
+  privacy_notice_version: '1.0',
+  consent_accepted_at: '2026-06-03T12:00:00.000Z',
+  age_confirmed_18_or_over: true,
   demographics: {},
   environment: {},
   technical: {},
@@ -92,6 +96,20 @@ test('hasRequiredSessionMetadata rejects missing or incomplete metadata', () => 
   assert.equal(
     hasRequiredSessionMetadata({
       ...validV1SessionMetadata,
+      age_confirmed_18_or_over: false,
+    }),
+    false
+  );
+  assert.equal(
+    hasRequiredSessionMetadata({
+      ...validV1SessionMetadata,
+      consent_accepted_at: '',
+    }),
+    false
+  );
+  assert.equal(
+    hasRequiredSessionMetadata({
+      ...validV1SessionMetadata,
       technical: null,
     }),
     false
@@ -100,6 +118,26 @@ test('hasRequiredSessionMetadata rejects missing or incomplete metadata', () => 
 
 test('hasRequiredSessionMetadata accepts valid v1 metadata shape', () => {
   assert.equal(hasRequiredSessionMetadata(validV1SessionMetadata), true);
+});
+
+test('startSession rejects missing consent metadata before topic allocation', async () => {
+  const provider = new TaskProvider('postgresql://example');
+  let queryCount = 0;
+
+  provider.withClient = async (run) =>
+    run({
+      query: async () => {
+        queryCount += 1;
+        return { rowCount: 0, rows: [] };
+      },
+    });
+  provider.expireStaleSessions = async () => {};
+
+  const result = await provider.startSession(null, {});
+
+  assert.equal(result.success, false);
+  assert.equal(result.code, 'consent_required');
+  assert.equal(queryCount, 0);
 });
 
 test('getUploadTarget rejects sessions without completed v1 metadata before task lookup', async () => {

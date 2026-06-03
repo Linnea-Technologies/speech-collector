@@ -219,16 +219,20 @@ There is no visible admin link in the volunteer UI.
 The main collection flow is:
 
 1. Volunteer opens the app.
-2. If Turnstile is configured, the volunteer completes the human verification gate.
-3. Backend starts or resumes an anonymous session.
-4. Volunteer sees the intro and metadata form.
-5. Volunteer records one prompt at a time in the current frontend; the backend also exposes category progress for the next UI.
-6. Each successful upload is stored and linked to the session.
-7. Volunteer can continue, refresh, or leave.
-8. Submitted recordings stay valid even if the session ends early.
-9. Completed sessions show a thank-you screen.
+2. Volunteer reads the welcome and consent screen with a short collection summary.
+3. A single small read-more link opens the full privacy and consent details.
+4. Volunteer must confirm they are 18 or older and consent to participate.
+5. If Turnstile is configured, the volunteer completes the human verification gate.
+6. Backend starts or resumes an anonymous session with consent metadata.
+7. Volunteer sees the intro and metadata form.
+8. Volunteer records category phrases.
+9. Each successful upload is stored and linked to the session.
+10. Volunteer can continue, refresh, or leave.
+11. Submitted recordings stay valid even if the session ends early.
+12. Completed sessions show a thank-you screen.
 
 The browser stores the active session token locally so an active session can resume automatically in the same browser.
+The full privacy and consent details are at `/#/privacy`. Compatibility route `/#/participant-info` renders the same full details page but is not linked from the normal volunteer flow. The internal admin UI remains at `/#/admin` and is not linked from the volunteer flow.
 
 ## Category Progress API
 
@@ -437,6 +441,7 @@ If you only need more test sessions and want to keep the existing prompt copies,
 - [docs/category-phrase-ui-plan.md](docs/category-phrase-ui-plan.md)
 - [docs/aina-s3-integration.md](docs/aina-s3-integration.md)
 - [docs/admin-validation-ui.md](docs/admin-validation-ui.md)
+- [docs/privacy-consent-flow.md](docs/privacy-consent-flow.md)
 - [docs/aina-data-contract.md](docs/aina-data-contract.md)
 - [docs/databuilder-export.md](docs/databuilder-export.md)
 - [docs/cloud-validation-session-2026-05-04.md](docs/cloud-validation-session-2026-05-04.md)

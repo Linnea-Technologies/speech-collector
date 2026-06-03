@@ -9,6 +9,9 @@ export const SESSION_STATUS = {
   ABANDONED: 'abandoned',
 };
 
+export const CONSENT_VERSION = '1.0';
+export const PRIVACY_NOTICE_VERSION = '1.0';
+
 export function calculateProgress(totalTasks, completedTasks) {
   const total = Number.parseInt(totalTasks, 10) || 0;
   const completed = Number.parseInt(completedTasks, 10) || 0;
@@ -35,12 +38,31 @@ function hasNonEmptyString(value) {
   return typeof value === 'string' && value.trim().length > 0;
 }
 
+function isValidIsoTimestamp(value) {
+  if (!hasNonEmptyString(value)) {
+    return false;
+  }
+
+  return Number.isFinite(Date.parse(value));
+}
+
+export function hasRequiredConsentMetadata(metadata) {
+  return (
+    isPlainObject(metadata) &&
+    metadata.consent_response === 'yes' &&
+    metadata.consent_version === CONSENT_VERSION &&
+    metadata.privacy_notice_version === PRIVACY_NOTICE_VERSION &&
+    isValidIsoTimestamp(metadata.consent_accepted_at) &&
+    metadata.age_confirmed_18_or_over === true
+  );
+}
+
 export function hasRequiredSessionMetadata(metadata) {
   return (
     isPlainObject(metadata) &&
     metadata.schema_version === 'v1' &&
     hasNonEmptyString(metadata.device_id) &&
-    metadata.consent_response === 'yes' &&
+    hasRequiredConsentMetadata(metadata) &&
     isPlainObject(metadata.demographics) &&
     isPlainObject(metadata.environment) &&
     isPlainObject(metadata.technical)
@@ -501,13 +523,30 @@ export class TaskProvider {
     );
   }
 
-  async startSession(existingToken = null) {
+  async startSession(existingToken = null, metadata = {}) {
     return this.withClient(async (client) => {
       await this.expireStaleSessions(client);
+      const consentMetadata = normalizeMetadata(metadata);
 
       if (existingToken) {
         const existingSession = await this.getSessionSummaryByToken(client, existingToken);
         if (existingSession?.status === SESSION_STATUS.ACTIVE) {
+          if (!hasRequiredConsentMetadata(existingSession.metadata)) {
+            if (!hasRequiredConsentMetadata(consentMetadata)) {
+              return {
+                success: false,
+                code: 'consent_required',
+                message:
+                  'Valid consent and 18+ confirmation are required before starting a session.',
+              };
+            }
+
+            await this.updateSessionMetadataDocument(client, existingSession.id, {
+              ...existingSession.metadata,
+              ...consentMetadata,
+            });
+          }
+
           await this.touchSession(client, existingSession.id);
           return {
             success: true,
@@ -515,6 +554,14 @@ export class TaskProvider {
             session: await this.getSessionSummaryByToken(client, existingToken),
           };
         }
+      }
+
+      if (!hasRequiredConsentMetadata(consentMetadata)) {
+        return {
+          success: false,
+          code: 'consent_required',
+          message: 'Valid consent and 18+ confirmation are required before starting a session.',
+        };
       }
 
       const sessionToken = randomUUID();
@@ -561,10 +608,10 @@ export class TaskProvider {
         const topicId = topicResult.rows[0].id;
         await client.query(
           `
-            INSERT INTO participant_sessions (session_token, topic_id, status)
-            VALUES ($1, $2, $3)
+            INSERT INTO participant_sessions (session_token, topic_id, status, metadata)
+            VALUES ($1, $2, $3, $4::jsonb)
           `,
-          [sessionToken, topicId, SESSION_STATUS.ACTIVE]
+          [sessionToken, topicId, SESSION_STATUS.ACTIVE, consentMetadata]
         );
 
         await client.query('COMMIT');
@@ -848,6 +895,20 @@ export class TaskProvider {
           success: false,
           code: 'session_not_active',
           message: 'Only active sessions can be updated.',
+          session,
+        };
+      }
+
+      const nextMetadata = {
+        ...normalizeMetadata(session.metadata),
+        ...normalizeMetadata(metadata),
+      };
+
+      if (!hasRequiredConsentMetadata(nextMetadata)) {
+        return {
+          success: false,
+          code: 'consent_required',
+          message: 'Valid consent and 18+ confirmation are required before updating session details.',
           session,
         };
       }

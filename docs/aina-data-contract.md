@@ -27,6 +27,10 @@ Required v1 shape:
   "schema_version": "v1",
   "device_id": "anonymous-browser-uuid",
   "consent_response": "yes",
+  "consent_version": "1.0",
+  "privacy_notice_version": "1.0",
+  "consent_accepted_at": "2026-06-03T12:00:00.000Z",
+  "age_confirmed_18_or_over": true,
   "demographics": {
     "age_group": "26-35",
     "gender": "prefer_not_to_say",
@@ -49,6 +53,8 @@ Required v1 shape:
 ```
 
 The volunteer does not type `device_id`, ISO language codes, browser user agent, OS, browser, or device type. `device_id` is an anonymous browser UUID stored in `localStorage` under `aina.speechCollector.deviceId` after consent is accepted; it is not a real hardware ID or serial number. It is used to resume an active session and show which phrases this browser has already recorded.
+
+`consent_response`, `consent_version`, `privacy_notice_version`, `consent_accepted_at`, and `age_confirmed_18_or_over` are required before the backend creates or resumes a volunteer collection session. The current consent and privacy notice versions are both `1.0`. Under-18 participation is blocked in the app by requiring `age_confirmed_18_or_over: true` before session creation.
 
 `native_language_other` is only shown and stored when `native_language` is `other`; otherwise it is `null`. `dialect_region_other` behaves the same way for `dialect_region = "other"`.
 
@@ -245,13 +251,21 @@ Example exported row:
       "storage_type": "local",
       "category": "yes",
       "phrase_id": "yes_kylla",
-      "semantic_label": "yes"
+      "semantic_label": "yes",
+      "consent": {
+        "consent_response": "yes",
+        "consent_version": "1.0",
+        "privacy_notice_version": "1.0",
+        "consent_accepted_at": "2026-06-03T12:00:00.000Z",
+        "age_confirmed_18_or_over": true
+      }
     }
   }
 }
 ```
 
 `label` remains an alias of `normalized_label` for the current audio-classifier loader. `speaker_id` is stable for the same browser `device_id` and is hashed with `DATASET_SPEAKER_HASH_SALT` during export.
+Consent fields are exported under `metadata.collection.consent` as governance metadata. They are not classifier labels and do not change `normalized_label`, `semantic_label`, `phrase_id`, or validation filtering.
 
 ## Databuilder Compatibility Export
 
@@ -324,7 +338,15 @@ Each `<sample_id>.json` sidecar is root-level for fields used by classifier filt
     "channel_count": 1,
     "encoding": "pcm_s16le"
   },
-  "collection": {},
+  "collection": {
+    "consent": {
+      "consent_response": "yes",
+      "consent_version": "1.0",
+      "privacy_notice_version": "1.0",
+      "consent_accepted_at": "2026-06-03T12:00:00.000Z",
+      "age_confirmed_18_or_over": true
+    }
+  },
   "storage": {}
 }
 ```

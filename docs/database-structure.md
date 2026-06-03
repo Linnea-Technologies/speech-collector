@@ -56,6 +56,8 @@ Status values:
 
 `metadata.ui.category_phrase_v1` stores the shuffled phrase order for the category UI. The order is created once per session and reused on refresh. If newly seeded phrases appear later, missing phrase IDs are appended in stable `task_idx` order.
 
+Consent governance fields are also stored in `metadata`: `consent_response`, `consent_version`, `privacy_notice_version`, `consent_accepted_at`, and `age_confirmed_18_or_over`. These fields are required before a volunteer session is created or updated for recording, but they do not require a database schema migration because `metadata` is JSONB.
+
 ### `recordings`
 
 One saved recording row per upload. Repeat recordings for the same `(session_id, task_id)` are separate valid samples.
