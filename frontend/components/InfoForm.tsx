@@ -137,7 +137,7 @@ const InfoForm = ({ message, canCancel = false, onCancel, onSaved }: InfoFormPro
 
     try {
       setFormMessage("");
-      const metadata = buildV1SessionMetadata(data);
+      const metadata = buildV1SessionMetadata(data, participantMetadata);
       const response = await fetch(`${apiUrl}/api/update-session-metadata`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },

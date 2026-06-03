@@ -5,7 +5,7 @@ import { randomUUID } from 'crypto';
 import path from 'path';
 import { fileURLToPath } from 'url';
 
-import { TaskProvider } from './taskProvider.js';
+import { hasRequiredConsentMetadata, TaskProvider } from './taskProvider.js';
 import { FileStorage, RecordingTooLongError } from './fileStorage.js';
 import { createAdminRouter, createDefaultAdminService } from './admin.js';
 import {
@@ -246,7 +246,16 @@ export function createApp(options = {}) {
       }
 
       const sessionToken = normalizeSessionToken(req.body?.sessionToken);
-      const result = await provider.startSession(sessionToken);
+      const metadata = req.body?.metadata;
+      if (!hasRequiredConsentMetadata(metadata)) {
+        return res.status(400).json({
+          success: false,
+          code: 'consent_required',
+          message: 'Valid consent and 18+ confirmation are required before starting a session.',
+        });
+      }
+
+      const result = await provider.startSession(sessionToken, metadata);
       res.status(200).json(result);
     } catch (error) {
       console.error('Error in /api/start-session:', error);

@@ -218,6 +218,11 @@ test('buildSample uses recording id and v1 labels in the manifest row', () => {
       session_metadata: {
         schema_version: 'v1',
         device_id: 'device-123',
+        consent_response: 'yes',
+        consent_version: '1.0',
+        privacy_notice_version: '1.0',
+        consent_accepted_at: '2026-06-03T12:00:00.000Z',
+        age_confirmed_18_or_over: true,
         demographics: {
           age_group: '26-35',
           gender: 'prefer_not_to_say',
@@ -295,6 +300,13 @@ test('buildSample uses recording id and v1 labels in the manifest row', () => {
   assert.equal(sample.metadata.collection.session_status, 'completed');
   assert.equal(sample.metadata.collection.phrase_id, 'yes_kylla');
   assert.equal(sample.metadata.collection.semantic_label, 'yes');
+  assert.deepEqual(sample.metadata.collection.consent, {
+    consent_response: 'yes',
+    consent_version: '1.0',
+    privacy_notice_version: '1.0',
+    consent_accepted_at: '2026-06-03T12:00:00.000Z',
+    age_confirmed_18_or_over: true,
+  });
 });
 
 test('buildSample keeps legacy semantic fields nullable', () => {
@@ -326,6 +338,13 @@ test('buildSample keeps legacy semantic fields nullable', () => {
   assert.equal(sample.semantic_label, null);
   assert.equal(sample.metadata.collection.phrase_id, null);
   assert.equal(sample.metadata.collection.semantic_label, null);
+  assert.deepEqual(sample.metadata.collection.consent, {
+    consent_response: null,
+    consent_version: null,
+    privacy_notice_version: null,
+    consent_accepted_at: null,
+    age_confirmed_18_or_over: null,
+  });
 });
 
 test('speaker id is stable for the same device id across sessions', () => {
