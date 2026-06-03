@@ -3,10 +3,13 @@ import assert from 'node:assert/strict';
 import path from 'path';
 
 import {
+  buildValidationFilterSummary,
   buildStorageFilterSummary,
   buildSample,
   buildDatasetMetadata,
   filterRowsForActiveStorage,
+  filterRowsForValidation,
+  getRecordingValidationStatus,
   inferAudioRoot,
   pseudonymizeDeviceId,
   pseudonymizeSpeaker,
@@ -137,6 +140,70 @@ test('mixed local and aws-s3 rows export only the active storage_type', () => {
   assert.equal(dataset.audio_root, path.join(getSpeechCollectorRoot(), 'tmp', 'recordings'));
   assert.equal(samples[0].sample_id, 'recording-local');
   assert.equal(samples[0].audio_path, localRow.storage_key);
+});
+
+test('default validation filter exports only validated rows', () => {
+  delete process.env.DATASET_VALIDATION_FILTER;
+  const pendingRow = { recording_id: 'pending', recording_metadata: {} };
+  const needsReviewRow = {
+    recording_id: 'needs-review',
+    recording_metadata: { validation: { status: 'needs_review' } },
+  };
+  const rejectedRow = {
+    recording_id: 'rejected',
+    recording_metadata: { validation: { status: 'rejected' } },
+  };
+  const validatedRow = {
+    recording_id: 'validated',
+    recording_metadata: { validation: { status: 'validated' } },
+  };
+
+  const result = filterRowsForValidation([
+    pendingRow,
+    needsReviewRow,
+    rejectedRow,
+    validatedRow,
+  ]);
+
+  assert.deepEqual(result.exportRows, [validatedRow]);
+  assert.equal(result.validationFilter, 'validated');
+  assert.equal(result.skippedCounts.pending, 1);
+  assert.equal(result.skippedCounts.needs_review, 1);
+  assert.equal(result.skippedCounts.rejected, 1);
+  assert.equal(getRecordingValidationStatus(pendingRow), 'pending');
+});
+
+test('not_rejected validation filter excludes only rejected rows', () => {
+  const rows = [
+    { recording_id: 'pending', recording_metadata: {} },
+    { recording_id: 'needs-review', recording_metadata: { validation: { status: 'needs_review' } } },
+    { recording_id: 'validated', recording_metadata: { validation: { status: 'validated' } } },
+    { recording_id: 'rejected', recording_metadata: { validation: { status: 'rejected' } } },
+  ];
+
+  const result = filterRowsForValidation(rows, 'not_rejected');
+
+  assert.deepEqual(
+    result.exportRows.map((row) => row.recording_id),
+    ['pending', 'needs-review', 'validated']
+  );
+  assert.equal(result.skippedCounts.rejected, 1);
+  assert.equal(
+    buildValidationFilterSummary(result),
+    'Skipped 1 recording(s) due to DATASET_VALIDATION_FILTER=not_rejected: rejected=1.'
+  );
+});
+
+test('all validation filter exports every otherwise eligible row', () => {
+  const rows = [
+    { recording_id: 'pending', recording_metadata: {} },
+    { recording_id: 'rejected', recording_metadata: { validation: { status: 'rejected' } } },
+  ];
+
+  const result = filterRowsForValidation(rows, 'all');
+
+  assert.deepEqual(result.exportRows, rows);
+  assert.equal(buildValidationFilterSummary(result), null);
 });
 
 test('buildSample uses recording id and v1 labels in the manifest row', () => {

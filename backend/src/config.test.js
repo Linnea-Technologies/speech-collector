@@ -2,6 +2,8 @@ import test, { afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
+  getAdminSessionTtlHours,
+  getDatasetValidationFilter,
   getMaxRecordingDurationToleranceSeconds,
   getMaxRecordingSeconds,
   getMaxUploadBytes,
@@ -45,4 +47,23 @@ test('config falls back when safety limits are invalid', () => {
   assert.equal(getMaxRecordingSeconds(), 5);
   assert.equal(getMaxUploadBytes(), 2000000);
   assert.equal(getMaxRecordingDurationToleranceSeconds(), 1);
+});
+
+test('config reads admin session TTL with default fallback', () => {
+  delete process.env.ADMIN_SESSION_TTL_HOURS;
+  assert.equal(getAdminSessionTtlHours(), 12);
+
+  process.env.ADMIN_SESSION_TTL_HOURS = '4';
+  assert.equal(getAdminSessionTtlHours(), 4);
+});
+
+test('config defaults validation filter to validated', () => {
+  delete process.env.DATASET_VALIDATION_FILTER;
+  assert.equal(getDatasetValidationFilter(), 'validated');
+
+  process.env.DATASET_VALIDATION_FILTER = 'not_rejected';
+  assert.equal(getDatasetValidationFilter(), 'not_rejected');
+
+  process.env.DATASET_VALIDATION_FILTER = 'invalid';
+  assert.equal(getDatasetValidationFilter(), 'validated');
 });

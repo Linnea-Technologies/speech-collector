@@ -6,6 +6,7 @@ import assert from 'node:assert/strict';
 import { inferAudioRoot } from '../../scripts/aina/exportDataset.js';
 import { getSpeechCollectorRoot, getSoundRecordingsRoot } from './config.js';
 import {
+  buildMetadataSidecarStorageKey,
   buildRecordingStorageKey,
   FileStorage,
   getProcessedAudioMetadata,
@@ -37,6 +38,13 @@ test('buildRecordingStorageKey uses a unique session/task/recording layout', () 
       'recording-789'
     ),
     'session-123/short_finnish_responses_v2_0001_yes_kylla/recording-789.wav'
+  );
+});
+
+test('buildMetadataSidecarStorageKey replaces wav extension with json', () => {
+  assert.equal(
+    buildMetadataSidecarStorageKey('session-123/task-456/recording-789.wav'),
+    'session-123/task-456/recording-789.json'
   );
 });
 
@@ -95,6 +103,72 @@ test('local persistence writes files under the same root the exporter publishes'
 
   assert.equal(finalPath, expectedPath);
   assert.equal(fs.readFileSync(finalPath, 'utf-8'), 'wav-data');
+});
+
+test('local JSON sidecar is written beside the wav file', async () => {
+  const appRoot = getSpeechCollectorRoot();
+  const testParent = path.join(appRoot, 'tmp');
+  fs.mkdirSync(testParent, { recursive: true });
+
+  const tempRoot = fs.mkdtempSync(path.join(testParent, 'sidecar-root-'));
+  cleanupPaths.push(tempRoot);
+
+  const recordingsRoot = path.join(tempRoot, 'recordings');
+  process.env.STORAGE = 'local';
+  process.env.SOUND_RECORDINGS_PATH = path.relative(appRoot, recordingsRoot);
+
+  const storage = new FileStorage('local');
+  const result = await storage.writeJsonSidecar(
+    {
+      storage_type: 'local',
+      storage_key: 'session-123/task-456/recording-789.wav',
+      recording_metadata: {
+        storage: {
+          object_key: 'session-123/task-456/recording-789.wav',
+        },
+      },
+    },
+    { sample_id: 'recording-789' }
+  );
+
+  const expectedPath = path.join(recordingsRoot, 'session-123', 'task-456', 'recording-789.json');
+  assert.equal(result.metadata_object_key, 'session-123/task-456/recording-789.json');
+  assert.equal(fs.existsSync(expectedPath), true);
+  assert.equal(JSON.parse(fs.readFileSync(expectedPath, 'utf-8')).sample_id, 'recording-789');
+});
+
+test('local audio stream supports byte ranges', async () => {
+  const appRoot = getSpeechCollectorRoot();
+  const testParent = path.join(appRoot, 'tmp');
+  fs.mkdirSync(testParent, { recursive: true });
+
+  const tempRoot = fs.mkdtempSync(path.join(testParent, 'audio-stream-root-'));
+  cleanupPaths.push(tempRoot);
+
+  const recordingsRoot = path.join(tempRoot, 'recordings');
+  const audioPath = path.join(recordingsRoot, 'session-123', 'task-456', 'recording-789.wav');
+  process.env.STORAGE = 'local';
+  process.env.SOUND_RECORDINGS_PATH = path.relative(appRoot, recordingsRoot);
+  fs.mkdirSync(path.dirname(audioPath), { recursive: true });
+  fs.writeFileSync(audioPath, Buffer.from('0123456789'));
+
+  const storage = new FileStorage('local');
+  const result = await storage.getRecordingAudioStream(
+    {
+      storage_type: 'local',
+      storage_key: 'session-123/task-456/recording-789.wav',
+    },
+    { rangeHeader: 'bytes=2-5' }
+  );
+  const chunks = [];
+  for await (const chunk of result.stream) {
+    chunks.push(chunk);
+  }
+
+  assert.equal(result.statusCode, 206);
+  assert.equal(result.contentLength, 4);
+  assert.equal(Buffer.concat(chunks).toString('utf-8'), '2345');
+  assert.equal(result.headers['Content-Range'], 'bytes 2-5/10');
 });
 
 test('saveRecording returns processed audio metadata with persisted local recordings', async () => {

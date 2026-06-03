@@ -23,6 +23,65 @@ function toPosixPath(value) {
   return value.replace(/\\/g, '/');
 }
 
+function assertPathInside(rootPath, targetPath) {
+  const relativePath = path.relative(rootPath, targetPath);
+  if (relativePath.startsWith('..') || path.isAbsolute(relativePath)) {
+    throw new Error(`Refusing to access storage path outside recordings root: ${targetPath}`);
+  }
+}
+
+function normalizeOptionalString(value) {
+  return typeof value === 'string' && value.trim() ? value.trim() : null;
+}
+
+function getRecordingMetadata(recording) {
+  const metadata = recording?.recording_metadata || recording?.metadata || {};
+  return metadata && typeof metadata === 'object' && !Array.isArray(metadata) ? metadata : {};
+}
+
+function getRecordingStorageMetadata(recording) {
+  const metadata = getRecordingMetadata(recording);
+  return metadata.storage && typeof metadata.storage === 'object' && !Array.isArray(metadata.storage)
+    ? metadata.storage
+    : {};
+}
+
+function getRecordingStorageType(recording, fallback) {
+  return normalizeOptionalString(recording?.storage_type) || normalizeOptionalString(recording?.storageType) || fallback;
+}
+
+function parseRangeHeader(rangeHeader, totalSize) {
+  if (!rangeHeader) {
+    return null;
+  }
+
+  const match = /^bytes=(\d*)-(\d*)$/.exec(rangeHeader);
+  if (!match) {
+    return null;
+  }
+
+  let start = match[1] ? Number.parseInt(match[1], 10) : null;
+  let end = match[2] ? Number.parseInt(match[2], 10) : null;
+
+  if (start === null && end === null) {
+    return null;
+  }
+
+  if (start === null) {
+    const suffixLength = Math.min(end, totalSize);
+    start = Math.max(totalSize - suffixLength, 0);
+    end = totalSize - 1;
+  } else if (end === null || end >= totalSize) {
+    end = totalSize - 1;
+  }
+
+  if (!Number.isFinite(start) || !Number.isFinite(end) || start < 0 || end < start || start >= totalSize) {
+    return null;
+  }
+
+  return { start, end };
+}
+
 export const PROCESSED_AUDIO_FFMPEG_OPTIONS = [
   '-c:a pcm_s16le',
   '-ar 16000',
@@ -43,6 +102,15 @@ export function buildRecordingStorageKey(sessionId, taskId, recordingId) {
   }
 
   return normalizeStorageKey(sessionId, taskId, `${recordingId}.wav`);
+}
+
+export function buildMetadataSidecarStorageKey(audioStorageKey) {
+  const storageKey = normalizeStorageKey(audioStorageKey);
+  if (!storageKey) {
+    throw new Error('audioStorageKey is required to build a metadata sidecar storage key.');
+  }
+
+  return /\.wav$/i.test(storageKey) ? storageKey.replace(/\.wav$/i, '.json') : `${storageKey}.json`;
 }
 
 export class RecordingTooLongError extends Error {
@@ -108,13 +176,65 @@ export class FileStorage {
     return normalizeStorageKey(this.collectionAudioPrefix, storageKey);
   }
 
+  getRecordingObjectKey(recording) {
+    const storageMetadata = getRecordingStorageMetadata(recording);
+    const metadata = getRecordingMetadata(recording);
+    const explicitObjectKey =
+      normalizeOptionalString(recording?.objectKey) ||
+      normalizeOptionalString(recording?.object_key) ||
+      normalizeOptionalString(storageMetadata.object_key) ||
+      normalizeOptionalString(metadata.object_key);
+
+    if (explicitObjectKey) {
+      return normalizeStorageKey(explicitObjectKey);
+    }
+
+    const storageKey = normalizeStorageKey(recording?.storage_key || recording?.storageKey);
+    const storageType = getRecordingStorageType(recording, this.storageType);
+    return storageType === 'local' ? storageKey : this.getObjectKey(storageKey);
+  }
+
+  getRecordingBucketName(recording) {
+    const storageMetadata = getRecordingStorageMetadata(recording);
+    const metadata = getRecordingMetadata(recording);
+    return (
+      normalizeOptionalString(recording?.bucketName) ||
+      normalizeOptionalString(recording?.bucket_name) ||
+      normalizeOptionalString(storageMetadata.bucket_name) ||
+      normalizeOptionalString(metadata.bucket_name) ||
+      this.bucketName ||
+      null
+    );
+  }
+
+  getMetadataSidecarInfo(recording) {
+    const storageType = getRecordingStorageType(recording, this.storageType);
+    const audioStorageKey = normalizeStorageKey(recording?.storage_key || recording?.storageKey);
+    const audioObjectKey = this.getRecordingObjectKey(recording);
+    const metadataStorageKey = buildMetadataSidecarStorageKey(audioStorageKey);
+    const metadataObjectKey =
+      storageType === 'local'
+        ? metadataStorageKey
+        : buildMetadataSidecarStorageKey(audioObjectKey || this.getObjectKey(audioStorageKey));
+
+    return {
+      storage_type: storageType,
+      storage_key: metadataStorageKey,
+      object_key: metadataObjectKey,
+      metadata_object_key: metadataObjectKey,
+      bucket_name: this.getRecordingBucketName(recording),
+    };
+  }
+
   getTempFilePath(sessionId, taskId) {
     const timestamp = Date.now();
     return path.join(this.tempRoot, `${sessionId}-${taskId}-${timestamp}.wav`);
   }
 
   getFinalLocalPath(storageKey) {
-    return path.join(this.recordingsRoot, ...storageKey.split('/'));
+    const finalPath = path.join(this.recordingsRoot, ...storageKey.split('/'));
+    assertPathInside(this.recordingsRoot, finalPath);
+    return finalPath;
   }
 
   async reencodeFile(inputPath) {
@@ -204,6 +324,114 @@ export class FileStorage {
 
     await pipeline(response.Body, fs.createWriteStream(destinationPath));
     return destinationPath;
+  }
+
+  async getRecordingAudioStream(recording, options = {}) {
+    const storageType = getRecordingStorageType(recording, this.storageType);
+    const rangeHeader = normalizeOptionalString(options.rangeHeader);
+
+    if (storageType === 'local') {
+      const storageKey = normalizeStorageKey(recording?.storage_key || recording?.storageKey);
+      const filePath = this.getFinalLocalPath(storageKey);
+      const stats = fs.statSync(filePath);
+      const range = parseRangeHeader(rangeHeader, stats.size);
+      const contentLength = range ? range.end - range.start + 1 : stats.size;
+      const stream = range
+        ? fs.createReadStream(filePath, { start: range.start, end: range.end })
+        : fs.createReadStream(filePath);
+
+      return {
+        stream,
+        statusCode: range ? 206 : 200,
+        contentType: 'audio/wav',
+        contentLength,
+        headers: {
+          'Accept-Ranges': 'bytes',
+          ...(range
+            ? { 'Content-Range': `bytes ${range.start}-${range.end}/${stats.size}` }
+            : {}),
+        },
+      };
+    }
+
+    if (storageType === 'aws-s3' || storageType === 'r2') {
+      if (!this.s3Client) {
+        throw new Error(`Storage client is not configured for ${storageType}.`);
+      }
+
+      const objectKey = this.getRecordingObjectKey(recording);
+      const bucketName = this.getRecordingBucketName(recording);
+      if (!objectKey || !bucketName) {
+        throw new Error('Object key and bucket name are required to stream remote audio.');
+      }
+
+      const response = await this.s3Client.send(
+        new GetObjectCommand({
+          Bucket: bucketName,
+          Key: objectKey,
+          ...(rangeHeader ? { Range: rangeHeader } : {}),
+        })
+      );
+
+      if (!response.Body) {
+        throw new Error(`Storage object ${objectKey} did not include a response body.`);
+      }
+
+      return {
+        stream: response.Body,
+        statusCode: rangeHeader ? 206 : 200,
+        contentType: response.ContentType || 'audio/wav',
+        contentLength: response.ContentLength,
+        headers: {
+          'Accept-Ranges': 'bytes',
+          ...(response.ContentRange ? { 'Content-Range': response.ContentRange } : {}),
+        },
+      };
+    }
+
+    throw new Error(`Unsupported storage type for audio stream: ${storageType}`);
+  }
+
+  async writeJsonSidecar(recording, data) {
+    const storageType = getRecordingStorageType(recording, this.storageType);
+    const sidecarInfo = this.getMetadataSidecarInfo(recording);
+    const body =
+      typeof data === 'string'
+        ? Buffer.from(data, 'utf-8')
+        : Buffer.from(`${JSON.stringify(data, null, 2)}\n`, 'utf-8');
+
+    if (storageType === 'local') {
+      const filePath = this.getFinalLocalPath(sidecarInfo.storage_key);
+      ensureDirectory(path.dirname(filePath));
+      fs.writeFileSync(filePath, body);
+      return {
+        ...sidecarInfo,
+        file_path: filePath,
+      };
+    }
+
+    if (storageType === 'aws-s3' || storageType === 'r2') {
+      if (!this.s3Client) {
+        throw new Error(`Storage client is not configured for ${storageType}.`);
+      }
+
+      if (!sidecarInfo.bucket_name) {
+        throw new Error('Bucket name is required to write a metadata sidecar.');
+      }
+
+      await this.s3Client.send(
+        new PutObjectCommand({
+          Bucket: sidecarInfo.bucket_name,
+          Key: sidecarInfo.metadata_object_key,
+          Body: body,
+          ContentType: 'application/json',
+        })
+      );
+
+      return sidecarInfo;
+    }
+
+    throw new Error(`Unsupported storage type for metadata sidecar: ${storageType}`);
   }
 
   async saveRecording(file, { sessionId, taskId, recordingId }) {

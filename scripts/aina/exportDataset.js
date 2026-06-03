@@ -7,11 +7,13 @@ import { fileURLToPath } from 'url';
 
 import {
   getCollectionAudioPrefix,
+  getDatasetValidationFilter,
   getSessionIdleTimeoutHours,
   getSoundRecordingsRoot,
 } from '../../backend/src/config.js';
 
 const { Client } = pkg;
+const VALIDATION_STATUSES = new Set(['pending', 'validated', 'needs_review', 'rejected']);
 
 export function configValue(name, fallback) {
   return process.env[name] || fallback;
@@ -120,6 +122,69 @@ export function getSemanticLabel(row) {
   return row.recording_metadata?.semantic_label || row.task_metadata?.semantic_label || null;
 }
 
+export function getRecordingValidationStatus(row) {
+  const status = row.recording_metadata?.validation?.status;
+  return VALIDATION_STATUSES.has(status) ? status : 'pending';
+}
+
+export function isRowExportableByValidationFilter(row, validationFilter = getDatasetValidationFilter()) {
+  const status = getRecordingValidationStatus(row);
+
+  if (validationFilter === 'all') {
+    return true;
+  }
+
+  if (validationFilter === 'not_rejected') {
+    return status !== 'rejected';
+  }
+
+  return status === 'validated';
+}
+
+export function filterRowsForValidation(rows, validationFilter = getDatasetValidationFilter()) {
+  const exportRows = [];
+  const skippedCounts = {
+    pending: 0,
+    needs_review: 0,
+    rejected: 0,
+    validated: 0,
+  };
+
+  for (const row of rows) {
+    if (isRowExportableByValidationFilter(row, validationFilter)) {
+      exportRows.push(row);
+      continue;
+    }
+
+    const status = getRecordingValidationStatus(row);
+    skippedCounts[status] = (skippedCounts[status] || 0) + 1;
+  }
+
+  return {
+    validationFilter,
+    exportRows,
+    skippedCounts,
+    skippedRowCount: rows.length - exportRows.length,
+  };
+}
+
+export function buildValidationFilterSummary({ validationFilter, skippedCounts, skippedRowCount }) {
+  if (!skippedRowCount) {
+    return null;
+  }
+
+  const skippedSummary = Object.entries(skippedCounts)
+    .filter(([, count]) => count > 0)
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([status, count]) => `${status}=${count}`)
+    .join(', ');
+
+  return (
+    `Skipped ${skippedRowCount} recording(s) due to DATASET_VALIDATION_FILTER=` +
+    `${validationFilter}: ${skippedSummary}.`
+  );
+}
+
 export function buildDatasetMetadata(rows, labels, audioRoot) {
   return {
     dataset_id: configValue('DATASET_ID', 'short_finnish_responses'),
@@ -188,6 +253,11 @@ export function buildSample(row, index, dataset) {
         ...recordingTechnical,
       },
       processed_audio: recordingMetadata.processed_audio || null,
+      validation: {
+        status: getRecordingValidationStatus(row),
+        validated_at: recordingMetadata.validation?.validated_at || null,
+        notes: recordingMetadata.validation?.notes || null,
+      },
       collection: {
         topic_id: row.topic_id,
         task_id: row.task_id,
@@ -334,7 +404,13 @@ export async function exportDataset() {
       fetchLabelVocabulary(client),
     ]);
 
-    const storageFilter = filterRowsForActiveStorage(rows);
+    const validationFilter = filterRowsForValidation(rows);
+    const validationSummary = buildValidationFilterSummary(validationFilter);
+    if (validationSummary) {
+      console.warn(validationSummary);
+    }
+
+    const storageFilter = filterRowsForActiveStorage(validationFilter.exportRows);
     const storageSummary = buildStorageFilterSummary(storageFilter);
     if (storageSummary) {
       console.warn(storageSummary);

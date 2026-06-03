@@ -11,6 +11,7 @@ It is built for anonymous volunteer sessions:
 - exit anytime without losing submitted prompts
 - PostgreSQL for session/task/recording state
 - AWS S3 as the production audio store
+- internal `/#/admin` validation UI for project members
 
 ## Architecture
 
@@ -23,6 +24,8 @@ volunteer browser
   -> permanent audio storage
      - local path in development
      - AWS S3 in production-like mode
+  -> internal admin validation API under /api/admin/*
+  -> validation JSON sidecars beside audio files
   -> exportDataset.js
   -> metadata/dataset.json + metadata/samples.jsonl
   -> exportDatabuilderDataset.js
@@ -85,10 +88,19 @@ MAX_UPLOAD_BYTES=2000000
 MAX_RECORDING_DURATION_TOLERANCE_SECONDS=1
 TURNSTILE_SECRET_KEY=
 
+ADMIN_PASSWORD_HASH=
+ADMIN_SESSION_SECRET=
+ADMIN_SESSION_TTL_HOURS=12
+
 AWS_ACCESS_KEY_ID=
 AWS_SECRET_ACCESS_KEY=
 AWS_REGION=eu-north-1
 AWS_BUCKET_NAME=
+
+CF_R2_ENDPOINT=
+CF_R2_ACCESS_KEY_ID=
+CF_R2_SECRET_ACCESS_KEY=
+CF_R2_BUCKET_NAME=
 
 AINA_TOPIC_COPIES=100
 
@@ -100,6 +112,7 @@ DATASET_TASK=short_response_classification
 DATASET_OUTPUT_DIR=./exports/short-finnish-responses/v2
 DATASET_AUDIO_ROOT=
 DATASET_SPEAKER_HASH_SALT=change-me-before-real-export
+DATASET_VALIDATION_FILTER=validated
 
 DATABUILDER_OUTPUT_DIR=./exports/short-finnish-responses/v2/databuilder
 DATABUILDER_MANIFEST_VERSION=20260501001
@@ -118,6 +131,16 @@ Notes:
 - `VITE_MAX_RECORDING_SECONDS` controls the frontend auto-stop timer. `MAX_RECORDING_SECONDS` plus `MAX_RECORDING_DURATION_TOLERANCE_SECONDS` is the backend duration limit.
 - `MAX_UPLOAD_BYTES` limits multipart audio upload size before storage.
 - Leave `VITE_TURNSTILE_SITE_KEY` and `TURNSTILE_SECRET_KEY` empty for local development. Configure both for public collection.
+- `ADMIN_PASSWORD_HASH`, `ADMIN_SESSION_SECRET`, and `ADMIN_SESSION_TTL_HOURS` enable the internal admin UI at `/#/admin`.
+- `DATASET_VALIDATION_FILTER` controls export eligibility. Missing or invalid values default to `validated`.
+
+Generate the shared admin password hash with:
+
+```bash
+pnpm run admin:hash-password
+```
+
+The command prints only the hash. Put the hash in `ADMIN_PASSWORD_HASH`; do not store a plaintext password in `.env`.
 
 ## Database Setup
 
@@ -183,6 +206,13 @@ Ports:
 
 - backend: `http://localhost:8000`
 - frontend: `http://localhost:5173`
+
+Internal admin URL:
+
+- local: `http://localhost:5173/#/admin`
+- production: `https://participate.hellolinnea.com/#/admin`
+
+There is no visible admin link in the volunteer UI.
 
 ## Volunteer Flow
 
@@ -318,6 +348,9 @@ Export behavior:
 - includes `completed` sessions
 - includes `abandoned` sessions
 - excludes still-`active` sessions
+- by default exports only recordings with `recordings.metadata.validation.status = "validated"`
+- `DATASET_VALIDATION_FILTER=not_rejected` exports pending, needs_review, and validated recordings while excluding rejected recordings
+- `DATASET_VALIDATION_FILTER=all` exports all otherwise eligible recordings
 - filters rows to the active `STORAGE` backend before building the manifest
 - uses `recordings.id` as `sample_id`
 - exports `normalized_label` and keeps `label` as its compatibility alias
@@ -348,6 +381,7 @@ exports/short-finnish-responses/v2/databuilder/
 Databuilder export behavior:
 
 - keeps `pnpm run aina:export` unchanged
+- respects `DATASET_VALIDATION_FILTER`, defaulting to validated-only recordings
 - filters rows to the active `STORAGE` backend, like the normal exporter
 - exports only classifier-ready recordings with `processed_audio` set to WAV PCM 16-bit, 16 kHz, mono
 - skips legacy recordings where `processed_audio` is missing, null, or different from the classifier-ready format
@@ -402,6 +436,7 @@ If you only need more test sessions and want to keep the existing prompt copies,
 - [docs/aina-refactor-plan.md](docs/aina-refactor-plan.md)
 - [docs/category-phrase-ui-plan.md](docs/category-phrase-ui-plan.md)
 - [docs/aina-s3-integration.md](docs/aina-s3-integration.md)
+- [docs/admin-validation-ui.md](docs/admin-validation-ui.md)
 - [docs/aina-data-contract.md](docs/aina-data-contract.md)
 - [docs/databuilder-export.md](docs/databuilder-export.md)
 - [docs/cloud-validation-session-2026-05-04.md](docs/cloud-validation-session-2026-05-04.md)
