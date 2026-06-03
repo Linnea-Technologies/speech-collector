@@ -208,6 +208,21 @@ export function buildDatasetMetadata(rows, labels, audioRoot) {
   };
 }
 
+export function buildConsentGovernanceMetadata(sessionMetadata = {}) {
+  return {
+    consent_response: sessionMetadata.consent_response || null,
+    consent_version: sessionMetadata.consent_version || null,
+    privacy_notice_version: sessionMetadata.privacy_notice_version || null,
+    consent_accepted_at: sessionMetadata.consent_accepted_at || null,
+    age_confirmed_18_or_over:
+      sessionMetadata.age_confirmed_18_or_over === true
+        ? true
+        : sessionMetadata.age_confirmed_18_or_over === false
+          ? false
+          : null,
+  };
+}
+
 export function buildSample(row, index, dataset) {
   const sampleId = getSampleId(row, index);
   const recordingMetadata = row.recording_metadata || {};
@@ -268,6 +283,7 @@ export function buildSample(row, index, dataset) {
         category,
         phrase_id: phraseId,
         semantic_label: semanticLabel,
+        consent: buildConsentGovernanceMetadata(sessionMetadata),
       },
       storage: {
         storage_type: row.storage_type,

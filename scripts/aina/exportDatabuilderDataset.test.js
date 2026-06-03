@@ -59,6 +59,11 @@ function makeRow(overrides = {}) {
     session_metadata: {
       schema_version: 'v1',
       device_id: 'device-123',
+      consent_response: 'yes',
+      consent_version: '1.0',
+      privacy_notice_version: '1.0',
+      consent_accepted_at: '2026-06-03T12:00:00.000Z',
+      age_confirmed_18_or_over: true,
       demographics: {
         age_group: '26-35',
         gender: 'prefer_not_to_say',
@@ -160,6 +165,13 @@ test('buildDatabuilderSidecar creates root-level databuilder fields', () => {
   assert.equal(sidecar.collection.session_id, 'session-123');
   assert.equal(sidecar.collection.phrase_id, 'yes_kylla');
   assert.equal(sidecar.collection.semantic_label, 'yes');
+  assert.deepEqual(sidecar.collection.consent, {
+    consent_response: 'yes',
+    consent_version: '1.0',
+    privacy_notice_version: '1.0',
+    consent_accepted_at: '2026-06-03T12:00:00.000Z',
+    age_confirmed_18_or_over: true,
+  });
   assert.equal(sidecar.storage.storage_key, 'session-123/short_finnish_responses_v1_0001_kylla.wav');
   assert.equal(
     sidecar.storage.metadata_object_key,
@@ -195,6 +207,7 @@ test('required sidecar keys always exist for original recordings', () => {
   assert.equal(Object.hasOwn(sidecar, 'environment'), true);
   assert.equal(Object.hasOwn(sidecar, 'technical'), true);
   assert.equal(Object.hasOwn(sidecar, 'collection'), true);
+  assert.equal(Object.hasOwn(sidecar.collection, 'consent'), true);
   assert.equal(Object.hasOwn(sidecar, 'storage'), true);
   assert.equal(Object.hasOwn(sidecar, 'speaker_id'), true);
   assert.equal(Object.hasOwn(sidecar, 'device_id'), true);

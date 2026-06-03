@@ -5,7 +5,6 @@
     "id": "age_group",
     "required": true,
     "options": [
-      { "value": "under_18", "label": "Under 18" },
       { "value": "18-25", "label": "18-25" },
       { "value": "26-35", "label": "26-35" },
       { "value": "36-50", "label": "36-50" },
@@ -112,23 +111,5 @@
         "label": "Not sure / I don't know"
       }
     ]
-  },
-  {
-    "label": "Consent",
-    "type": "consent_markdown_yes_no",
-    "id": "consent_response",
-    "required": true,
-    "markdown": "### Consent to participate\nBy choosing **Yes**, you confirm that:\n\n- these recordings are collected for a speech-classifier project\n- your recordings and session details may be stored, reviewed, and exported for research and model development\n- an anonymous random browser ID is stored in this browser so we can resume an active session and show which phrases this browser has already recorded\n- the browser ID is not a hardware serial number and does not include your name, email, or phone number\n- clearing browser storage removes this ID from this browser, but recordings already submitted remain stored under the previous anonymous ID\n- basic browser, device, and microphone information may be collected automatically to understand recording quality\n- participation is voluntary and you may stop at any time",
-    "options": [
-      {
-        "value": "yes",
-        "label": "Yes, I consent"
-      },
-      {
-        "value": "no",
-        "label": "No, I do not consent"
-      }
-    ],
-    "declineMessage": "Thank you for your response. This session has been closed and no prompts were shown."
   }
 ]

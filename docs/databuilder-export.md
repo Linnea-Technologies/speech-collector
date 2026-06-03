@@ -105,7 +105,15 @@ Each `<sample_id>.json` sidecar is root-level:
     "channel_count": 1,
     "encoding": "pcm_s16le"
   },
-  "collection": {},
+  "collection": {
+    "consent": {
+      "consent_response": "yes",
+      "consent_version": "1.0",
+      "privacy_notice_version": "1.0",
+      "consent_accepted_at": "2026-06-03T12:00:00.000Z",
+      "age_confirmed_18_or_over": true
+    }
+  },
   "storage": {}
 }
 ```
@@ -116,7 +124,7 @@ It is flat because audio-classifier filters use dotted paths like `demographics.
 
 Older recordings collected before the processed-audio fix may not contain `processed_audio`; those sidecars keep the root-level key with `null`. Legacy recordings without `phrase_id` or `semantic_label` keep those keys as `null`; missing semantic metadata does not make an otherwise classifier-ready recording invalid.
 
-The same `phrase_id` and `semantic_label` values are also included under `collection.phrase_id` and `collection.semantic_label`. `normalized_label` remains the phrase-level classifier target.
+The same `phrase_id` and `semantic_label` values are also included under `collection.phrase_id` and `collection.semantic_label`. `collection.consent` carries consent governance metadata only. `normalized_label` remains the phrase-level classifier target.
 
 ## Manifest
 
