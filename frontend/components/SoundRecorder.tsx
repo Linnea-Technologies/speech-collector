@@ -1,14 +1,29 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useReactMediaRecorder } from "react-media-recorder";
 
+import {
+  buildRecordingUploadFile,
+  getActualRecordingMimeType,
+  getAudioFileExtension,
+  selectRecordingMimeType,
+} from "../utils/recordingMime";
+import type { SessionState, SessionStatus } from "../types/session";
 import { getAudioTrackTechnicalMetadata } from "../utils/technicalMetadata";
 import "./SoundRecorder.css";
+
+interface UploadSoundResult {
+  success?: boolean;
+  message?: string;
+  session?: SessionState;
+  sessionStatus?: SessionStatus;
+  [key: string]: unknown;
+}
 
 interface SoundRecorderProps {
   sessionToken: string | null;
   taskId: string;
   promptedWord: string;
-  onUploadComplete: (result: any) => Promise<void> | void;
+  onUploadComplete: (result: UploadSoundResult) => Promise<void> | void;
   onNextTask?: () => Promise<void> | void;
   nextActionLabel?: string;
 }
@@ -28,6 +43,33 @@ const SoundRecorder = ({
   onNextTask,
   nextActionLabel = "Next prompt",
 }: SoundRecorderProps) => {
+  const selectedRecordingMimeType = useMemo(() => selectRecordingMimeType(), []);
+  const mediaDebugEnabled = useMemo(() => {
+    if (!import.meta.env.DEV || typeof window === "undefined") {
+      return false;
+    }
+
+    return new URLSearchParams(window.location.search).get("mediaDebug") === "1";
+  }, []);
+  const mediaRecorderOptions = useMemo<MediaRecorderOptions | undefined>(
+    () =>
+      selectedRecordingMimeType
+        ? {
+            mimeType: selectedRecordingMimeType,
+          }
+        : undefined,
+    [selectedRecordingMimeType]
+  );
+  const blobPropertyBag = useMemo<BlobPropertyBag>(() => ({}), []);
+  const [recordingBlob, setRecordingBlob] = useState<Blob | null>(null);
+  const [playbackMessage, setPlaybackMessage] = useState<string>("");
+  const logMediaDebug = (event: string, payload: Record<string, unknown>) => {
+    if (!mediaDebugEnabled) {
+      return;
+    }
+
+    console.info("[mediaDebug]", event, payload);
+  };
   const {
     error: recorderError,
     status,
@@ -39,6 +81,21 @@ const SoundRecorder = ({
   } = useReactMediaRecorder({
     audio: true,
     video: false,
+    mediaRecorderOptions,
+    blobPropertyBag,
+    onStop: (_blobUrl, blob) => {
+      const actualMimeType = getActualRecordingMimeType(blob.type, [], selectedRecordingMimeType);
+      const typedBlob =
+        actualMimeType && blob.type !== actualMimeType ? new Blob([blob], { type: actualMimeType }) : blob;
+
+      logMediaDebug("recording-stopped", {
+        selectedMimeType: selectedRecordingMimeType || null,
+        actualBlobMimeType: typedBlob.type || null,
+        blobSize: typedBlob.size,
+        extension: getAudioFileExtension(typedBlob.type),
+      });
+      setRecordingBlob(typedBlob);
+    },
   });
   const [taskDone, setTaskDone] = useState<boolean>(false);
   const [soundUploading, setSoundUploading] = useState<boolean>(false);
@@ -57,6 +114,8 @@ const SoundRecorder = ({
     stopRecordingRef.current = stopRecording;
   }, [clearBlobUrl, stopRecording]);
 
+  useEffect(() => () => clearBlobUrlRef.current(), []);
+
   useEffect(() => {
     setTaskDone(false);
     setSoundUploading(false);
@@ -65,6 +124,8 @@ const SoundRecorder = ({
     setElapsedSeconds(0);
     setTranscriptMode("same");
     setLiteralTranscript("");
+    setRecordingBlob(null);
+    setPlaybackMessage("");
     clearBlobUrlRef.current();
   }, [taskId]);
 
@@ -101,6 +162,8 @@ const SoundRecorder = ({
 
   const handleStartRecording = () => {
     clearBlobUrl();
+    setRecordingBlob(null);
+    setPlaybackMessage("");
     setTaskDone(false);
     setUploadFailed(false);
     setUploadMessage("");
@@ -123,12 +186,12 @@ const SoundRecorder = ({
     };
   };
 
-  const uploadSound = async () => {
+  const uploadSound = async (): Promise<UploadSoundResult> => {
     if (!sessionToken) {
       throw new Error("A session token is required before uploading.");
     }
 
-    if (!mediaBlobUrl) {
+    if (!recordingBlob || recordingBlob.size === 0) {
       throw new Error("Record audio before uploading.");
     }
 
@@ -137,8 +200,7 @@ const SoundRecorder = ({
     formData.append("taskId", taskId);
     formData.append("metadata", JSON.stringify(buildUploadMetadata()));
 
-    const blob = await fetch(mediaBlobUrl).then((response) => response.blob());
-    const file = new File([blob], `${taskId}.wav`, { type: "audio/wav" });
+    const file = buildRecordingUploadFile(recordingBlob, taskId);
     formData.append("file", file);
 
     const response = await fetch(`${apiUrl}/api/upload-sound`, {
@@ -146,7 +208,7 @@ const SoundRecorder = ({
       body: formData,
     });
 
-    const data = await response.json();
+    const data = (await response.json()) as UploadSoundResult;
     if (!data.success) {
       throw new Error(data.message || "Could not upload the recording.");
     }
@@ -159,7 +221,50 @@ const SoundRecorder = ({
       <div className="recorder-preview">
         {mediaBlobUrl ? (
           <>
-            <audio src={mediaBlobUrl} controls />
+            <audio
+              key={mediaBlobUrl}
+              controls
+              preload="metadata"
+              onCanPlay={() => setPlaybackMessage("")}
+              onLoadedMetadata={(event) => {
+                setPlaybackMessage("");
+                logMediaDebug("audio-loadedmetadata", {
+                  blobMimeType: recordingBlob?.type || null,
+                  canPlayType: recordingBlob?.type
+                    ? event.currentTarget.canPlayType(recordingBlob.type)
+                    : "",
+                  duration: event.currentTarget.duration,
+                });
+              }}
+              onStalled={() => {
+                logMediaDebug("audio-stalled", {
+                  blobMimeType: recordingBlob?.type || null,
+                  blobSize: recordingBlob?.size ?? null,
+                });
+                setPlaybackMessage("Playback is still loading. If it does not start, try re-recording.");
+              }}
+              onError={(event) => {
+                const audioError = event.currentTarget.error;
+                logMediaDebug("audio-error", {
+                  blobMimeType: recordingBlob?.type || null,
+                  canPlayType: recordingBlob?.type
+                    ? event.currentTarget.canPlayType(recordingBlob.type)
+                    : "",
+                  errorCode: audioError?.code ?? null,
+                  errorMessage: audioError?.message || null,
+                });
+                setPlaybackMessage(
+                  audioError
+                    ? `Playback could not load on this device. Error code: ${audioError.code}.`
+                    : "Playback could not load on this device. Try re-recording before upload."
+                );
+              }}
+            >
+              <source src={mediaBlobUrl} type={recordingBlob?.type || undefined} />
+            </audio>
+            {playbackMessage && (
+              <p className="app-inline-message app-inline-message--error">{playbackMessage}</p>
+            )}
             <div className="recorder-transcript">
               <span>What did you actually say?</span>
               <div className="recorder-transcript__options">
@@ -243,6 +348,8 @@ const SoundRecorder = ({
               setUploadMessage("");
               const result = await uploadSound();
               setTaskDone(Boolean(onNextTask) && result.sessionStatus !== "completed");
+              setRecordingBlob(null);
+              setPlaybackMessage("");
               clearBlobUrlRef.current();
               setUploadMessage("Recording saved.");
               await onUploadComplete(result);
@@ -255,7 +362,7 @@ const SoundRecorder = ({
               setSoundUploading(false);
             }
           }}
-          disabled={status !== "stopped" || !mediaBlobUrl || soundUploading}
+          disabled={status !== "stopped" || !recordingBlob || recordingBlob.size === 0 || soundUploading}
         >
           {soundUploading ? "Uploading..." : "Upload"}
         </button>
