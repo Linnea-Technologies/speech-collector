@@ -60,8 +60,10 @@ function createProvider(overrides = {}) {
         categories: [],
       };
     },
-    async submitRecording(_sessionToken, _taskId, recordingDetails) {
+    async submitRecording(sessionToken, taskId, recordingDetails) {
       this.submitRecordingCalls += 1;
+      this.lastSubmitSessionToken = sessionToken;
+      this.lastSubmitTaskId = taskId;
       this.lastRecordingDetails = recordingDetails;
       return { success: true, sessionStatus: 'active' };
     },
@@ -72,8 +74,9 @@ function createProvider(overrides = {}) {
 function createFileStorage(overrides = {}) {
   return {
     saveRecordingCalls: 0,
-    async saveRecording(_file, options) {
+    async saveRecording(file, options) {
       this.saveRecordingCalls += 1;
+      this.lastFile = file;
       this.lastSaveOptions = options;
       const storageKey = `${options.sessionId}/${options.taskId}/${options.recordingId}.wav`;
       return {
@@ -108,7 +111,12 @@ async function withServer(app, run) {
   }
 }
 
-function createUploadForm({ metadata = undefined, fileBytes = 'wav-data' } = {}) {
+function createUploadForm({
+  metadata = undefined,
+  fileBytes = 'wav-data',
+  fileType = 'audio/wav',
+  filename = 'task-123.wav',
+} = {}) {
   const form = new FormData();
   form.set('sessionToken', 'session-token');
   form.set('taskId', 'task-123');
@@ -116,7 +124,7 @@ function createUploadForm({ metadata = undefined, fileBytes = 'wav-data' } = {})
     form.set('metadata', metadata);
   }
 
-  form.set('file', new Blob([fileBytes], { type: 'audio/wav' }), 'task-123.wav');
+  form.set('file', new Blob([fileBytes], { type: fileType }), filename);
   return form;
 }
 
@@ -351,9 +359,18 @@ test('session metadata guard rejection prevents storage and DB submit', async ()
     const response = await fetch(`${baseUrl}/api/upload-sound`, {
       method: 'POST',
       body: createUploadForm({
+        fileType: 'audio/webm;codecs=opus',
+        filename: 'task-123.webm',
         metadata: JSON.stringify({
-          literal_transcript: null,
-          label_source: 'prompt_assumed',
+          literal_transcript: 'kyl',
+          label_source: 'user_confirmed',
+          technical: {
+            sample_rate_hz: 48000,
+            channel_count: 1,
+            media_stream_settings: {
+              echoCancellation: true,
+            },
+          },
         }),
       }),
     });
@@ -381,9 +398,18 @@ test('upload continues past upload target when session metadata is valid', async
     const response = await fetch(`${baseUrl}/api/upload-sound`, {
       method: 'POST',
       body: createUploadForm({
+        fileType: 'audio/webm;codecs=opus',
+        filename: 'task-123.webm',
         metadata: JSON.stringify({
-          literal_transcript: null,
-          label_source: 'prompt_assumed',
+          literal_transcript: 'kyl',
+          label_source: 'user_confirmed',
+          technical: {
+            sample_rate_hz: 48000,
+            channel_count: 1,
+            media_stream_settings: {
+              echoCancellation: true,
+            },
+          },
         }),
       }),
     });
@@ -394,6 +420,12 @@ test('upload continues past upload target when session metadata is valid', async
     assert.equal(provider.getUploadTargetCalls, 1);
     assert.equal(fileStorage.saveRecordingCalls, 1);
     assert.equal(provider.submitRecordingCalls, 1);
+    assert.equal(provider.lastSubmitSessionToken, 'session-token');
+    assert.equal(provider.lastSubmitTaskId, 'task-123');
+    assert.equal(fileStorage.lastSaveOptions.sessionId, 'session-123');
+    assert.equal(fileStorage.lastSaveOptions.taskId, 'task-123');
+    assert.equal(fileStorage.lastFile.originalname, 'task-123.webm');
+    assert.equal(fileStorage.lastFile.mimetype, 'audio/webm');
     assert.match(fileStorage.lastSaveOptions.recordingId, /^[0-9a-f-]{36}$/);
     assert.equal(provider.lastRecordingDetails.recordingId, fileStorage.lastSaveOptions.recordingId);
     assert.equal(
@@ -402,6 +434,15 @@ test('upload continues past upload target when session metadata is valid', async
     );
     assert.equal(provider.lastRecordingDetails.metadata.phrase_id, 'yes_kylla');
     assert.equal(provider.lastRecordingDetails.metadata.semantic_label, 'yes');
+    assert.equal(provider.lastRecordingDetails.metadata.literal_transcript, 'kyl');
+    assert.equal(provider.lastRecordingDetails.metadata.label_source, 'user_confirmed');
+    assert.deepEqual(provider.lastRecordingDetails.metadata.technical, {
+      sample_rate_hz: 48000,
+      channel_count: 1,
+      media_stream_settings: {
+        echoCancellation: true,
+      },
+    });
     assert.deepEqual(provider.lastRecordingDetails.metadata.processed_audio, {
       sample_rate_hz: 16000,
       channel_count: 1,

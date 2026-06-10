@@ -1,7 +1,11 @@
 import fs from 'fs';
 import path from 'path';
+import { execFile } from 'node:child_process';
 import test, { afterEach } from 'node:test';
 import assert from 'node:assert/strict';
+import { promisify } from 'node:util';
+import ffmpegPath from 'ffmpeg-static';
+import ffprobe from 'ffprobe-static';
 
 import { inferAudioRoot } from '../../scripts/aina/exportDataset.js';
 import { getSpeechCollectorRoot, getSoundRecordingsRoot } from './config.js';
@@ -15,6 +19,7 @@ import {
 
 const originalEnv = { ...process.env };
 const cleanupPaths = [];
+const execFileAsync = promisify(execFile);
 
 afterEach(() => {
   for (const key of Object.keys(process.env)) {
@@ -41,6 +46,52 @@ test('buildRecordingStorageKey uses a unique session/task/recording layout', () 
   );
 });
 
+async function generateTinyAudioFixture(outputPath, outputOptions) {
+  try {
+    await execFileAsync(ffmpegPath, [
+      '-hide_banner',
+      '-loglevel',
+      'error',
+      '-f',
+      'lavfi',
+      '-i',
+      'sine=frequency=440:duration=0.25',
+      ...outputOptions,
+      '-y',
+      outputPath,
+    ]);
+  } catch (error) {
+    const stderr = typeof error?.stderr === 'string' ? error.stderr.trim() : '';
+    throw new Error(stderr || error.message);
+  }
+}
+
+async function probeAudioFile(inputPath) {
+  const { stdout } = await execFileAsync(ffprobe.path, [
+    '-v',
+    'error',
+    '-select_streams',
+    'a:0',
+    '-show_entries',
+    'stream=codec_name,sample_rate,channels',
+    '-of',
+    'json',
+    inputPath,
+  ]);
+
+  return JSON.parse(stdout).streams?.[0] || {};
+}
+
+async function assertReencodedFixture(inputPath) {
+  const storage = new FileStorage('local');
+  await storage.reencodeFile(inputPath);
+
+  const metadata = await probeAudioFile(inputPath);
+  assert.equal(metadata.codec_name, 'pcm_s16le');
+  assert.equal(metadata.sample_rate, '16000');
+  assert.equal(metadata.channels, 1);
+}
+
 test('buildMetadataSidecarStorageKey replaces wav extension with json', () => {
   assert.equal(
     buildMetadataSidecarStorageKey('session-123/task-456/recording-789.wav'),
@@ -59,6 +110,38 @@ test('processed audio ffmpeg options enforce 16 kHz mono PCM WAV', () => {
     channel_count: 1,
     encoding: 'pcm_s16le',
   });
+});
+
+test('reencodeFile normalizes WebM Opus input to 16 kHz mono PCM audio', async () => {
+  const appRoot = getSpeechCollectorRoot();
+  const testParent = path.join(appRoot, 'tmp');
+  fs.mkdirSync(testParent, { recursive: true });
+
+  const tempRoot = fs.mkdtempSync(path.join(testParent, 'webm-reencode-root-'));
+  cleanupPaths.push(tempRoot);
+
+  const inputPath = path.join(tempRoot, 'browser-webm-bytes-in-wav-temp-file.wav');
+  process.env.STORAGE = 'local';
+  process.env.SOUND_RECORDINGS_PATH = path.relative(appRoot, path.join(tempRoot, 'recordings'));
+
+  await generateTinyAudioFixture(inputPath, ['-c:a', 'libopus', '-f', 'webm']);
+  await assertReencodedFixture(inputPath);
+});
+
+test('reencodeFile normalizes MP4 AAC input to 16 kHz mono PCM audio', async () => {
+  const appRoot = getSpeechCollectorRoot();
+  const testParent = path.join(appRoot, 'tmp');
+  fs.mkdirSync(testParent, { recursive: true });
+
+  const tempRoot = fs.mkdtempSync(path.join(testParent, 'mp4-reencode-root-'));
+  cleanupPaths.push(tempRoot);
+
+  const inputPath = path.join(tempRoot, 'browser-mp4-bytes-in-wav-temp-file.wav');
+  process.env.STORAGE = 'local';
+  process.env.SOUND_RECORDINGS_PATH = path.relative(appRoot, path.join(tempRoot, 'recordings'));
+
+  await generateTinyAudioFixture(inputPath, ['-c:a', 'aac', '-f', 'mp4']);
+  await assertReencodedFixture(inputPath);
 });
 
 test('relative SOUND_RECORDINGS_PATH resolves from the speech-collector root in backend and exporter', () => {
